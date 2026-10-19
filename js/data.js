@@ -1,7 +1,5 @@
 // Drive data -> the one model every view reads (map, panel, drive-through).
-import { dwellMinutes, DWELL_IS_DEMO } from './dwell.js';
-
-export { DWELL_IS_DEMO };
+import { dwellMinutes } from './dwell.js';
 
 export const PARKING_SIGNS = new Set(['parking_sign', 'no_parking_sign', 'no_stopping_sign', 'disabled_parking_sign']);
 
@@ -30,13 +28,10 @@ const median = a => {
 
 export async function loadModel() {
   const runs = await (await fetch('data/runs.json')).json();
-  const run = runs[0];
-  const [drive, scene] = await Promise.all([run.drive, run.scene].map(async u => {
-    const r = await fetch(u);
-    if (!r.ok) throw new Error(`Failed to load ${u}`);
-    return r.json();
-  }));
-  const origin = scene.origin;
+  const r = await fetch(runs[0].drive);
+  if (!r.ok) throw new Error(`Failed to load ${runs[0].drive}`);
+  const drive = await r.json();
+  const origin = drive.origin;
   const kx = 1 / (111320 * Math.cos(origin.lat * Math.PI / 180)), ky = 1 / 110540;
   const toLngLat = (x, y) => [origin.lon + x * kx, origin.lat + y * ky];
 

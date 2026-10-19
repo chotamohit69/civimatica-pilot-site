@@ -1266,8 +1266,8 @@ button {
   opacity: 1;
 }
 
-/* Brand chip (Civimatica bottom-right) */
-.brand-chip.credit {
+/* Brand chip (Civimatica bottom-right) and the demo-dwell note above it */
+.brand-chip {
   position: absolute;
   z-index: 10;
   right: 14px;
@@ -1287,6 +1287,12 @@ button {
   box-shadow: 0 6px 18px rgba(48, 36, 18, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.7);
   pointer-events: none;
+}
+
+.brand-chip.map-note {
+  bottom: 50px;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .brand-chip .mark i {
@@ -1522,6 +1528,13 @@ button {
 
   .brand-chip.credit {
     top: 14px;
+    left: 14px;
+    right: auto;
+    bottom: auto;
+  }
+
+  .brand-chip.map-note {
+    top: 50px;
     left: 14px;
     right: auto;
     bottom: auto;

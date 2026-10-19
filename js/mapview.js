@@ -9,6 +9,18 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// Map area the floating panel covers: the left column on desktop, the bottom sheet under 760 px.
+function viewPadding(edge) {
+  return innerWidth < 760
+    ? { left: edge / 2, right: edge / 2, top: edge, bottom: Math.round(innerHeight * 0.55) + edge / 2 }
+    : { left: 400, top: edge, right: edge, bottom: edge };
+}
+
+// Drive-mode follow camera: keeps the car clear of the panel, slightly below centre.
+function followPadding() {
+  return innerWidth < 760 ? { left: 0, right: 0, top: 0, bottom: Math.round(innerHeight * 0.55) } : { left: 380, top: 200, right: 0, bottom: 0 };
+}
+
 export function createMap(container, model, options = {}) {
   const mapboxgl = window.mapboxgl;
   mapboxgl.accessToken = options.token;
@@ -43,7 +55,7 @@ export function createMap(container, model, options = {}) {
     },
     bounds: routeBounds,
     fitBoundsOptions: {
-      padding: { left: 400, top: 60, right: 60, bottom: 60 },
+      padding: viewPadding(60),
       pitch: 50,
       bearing: -17
     },
@@ -87,8 +99,9 @@ export function createMap(container, model, options = {}) {
     bearing: 0,
     pitch: 62,
     zoom: 17.3,
-    padding: { left: 380, bottom: 160 }
+    padding: followPadding()
   };
+  addEventListener('resize', () => { jumpOptions.padding = followPadding(); });
 
   // Zoom classes toggle on container & zone pills
   const updateZoomClasses = () => {
@@ -206,7 +219,7 @@ export function createMap(container, model, options = {}) {
       map.setPaintProperty('route-line', 'line-opacity', 1);
       map.setPaintProperty('route-casing', 'line-opacity', 0.95);
       map.fitBounds(routeBounds, {
-        padding: { left: 400, top: 60, right: 60, bottom: 60 },
+        padding: viewPadding(60),
         pitch: 50,
         bearing: -17,
         duration: 800
@@ -246,8 +259,9 @@ export function createMap(container, model, options = {}) {
     });
 
     map.fitBounds(street.bounds, {
-      padding: { left: 400, top: 80, right: 80, bottom: 80 },
+      padding: viewPadding(80),
       maxZoom: 17.5,
+      pitch: 50,
       duration: 800
     });
   }
@@ -263,7 +277,7 @@ export function createMap(container, model, options = {}) {
         map.setPaintProperty('route-traveled', 'line-opacity', 0);
         applyFilters(true);
         map.fitBounds(routeBounds, {
-          padding: { left: 400, top: 60, right: 60, bottom: 60 },
+          padding: viewPadding(60),
           pitch: 50,
           bearing: -17,
           duration: 800

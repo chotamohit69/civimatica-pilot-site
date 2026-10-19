@@ -11,6 +11,16 @@ function escapeHtml(s) {
     .replace(/"/g, '&quot;');
 }
 
+// 14 px line icons for the colour tiles (colour emoji render differently on every OS).
+const svg = d => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+export const ICON = {
+  sign: svg('<path d="M8 2.5 14 13H2z"/><path d="M8 6.8v2.6M8 11.3v.1"/>'),
+  parkingSign: svg('<circle cx="8" cy="8" r="5.6"/><path d="M4 12 12 4"/>'),
+  object: svg('<circle cx="4" cy="11" r="2.4"/><circle cx="12" cy="11" r="2.4"/><path d="M4 11 6.5 5.5h3.5L12 11M6.5 5.5 8.5 11"/>'),
+  camera: svg('<rect x="1.5" y="4.5" width="13" height="9" rx="2"/><circle cx="8" cy="9" r="2.4"/><path d="M5.5 4.5 6.5 2.5h3l1 2"/>'),
+  street: svg('<path d="M3.5 14 6 2M12.5 14 10 2M8 3.5v1.5M8 7.5V9M8 11.5V13"/>')
+};
+
 export function createPanel(el, model, handlers) {
   let activeTab = 'survey'; // 'survey' | 'streets' | 'drive' | 'rig'
   let activeKinds = new Set(['parked', 'parking-sign', 'sign', 'object']);
@@ -355,7 +365,7 @@ export function createPanel(el, model, handlers) {
 
     // 1. PARKED
     if (parked.length > 0) {
-      html += `<h3 class="sec">Parked (${parked.length.toLocaleString()})</h3>`;
+      html += `<h3 class="sec">Parked (${parked.length.toLocaleString()}) · demo dwell</h3>`;
       const limit = expandedSections.parked ? parked.length : Math.min(parked.length, 40);
       for (let i = 0; i < limit; i++) {
         const item = parked[i];
@@ -387,7 +397,7 @@ export function createPanel(el, model, handlers) {
         const isSel = item.id === selectedId;
         html += `
           <button type="button" class="row ${isSel ? 'on is-selected' : ''}" data-id="${escapeHtml(item.id)}">
-            <span class="ico domain-waste" aria-hidden="true">🅿</span>
+            <span class="ico domain-waste" aria-hidden="true">${ICON.parkingSign}</span>
             <span class="copy">
               <strong>${escapeHtml(item.label)}</strong>
               <em>${escapeHtml(item.street || 'Street not read')}</em>
@@ -410,7 +420,7 @@ export function createPanel(el, model, handlers) {
         const isSel = item.id === selectedId;
         html += `
           <button type="button" class="row ${isSel ? 'on is-selected' : ''}" data-id="${escapeHtml(item.id)}">
-            <span class="ico domain-access" aria-hidden="true">⚠</span>
+            <span class="ico domain-access" aria-hidden="true">${ICON.sign}</span>
             <span class="copy">
               <strong>${escapeHtml(item.label)}</strong>
               <em>${escapeHtml(item.street || 'Street not read')}</em>
@@ -434,7 +444,7 @@ export function createPanel(el, model, handlers) {
         const sub = `${item.state === 'moving' ? 'Moving' : 'Unknown motion'} · ${item.street || 'Street not read'}`;
         html += `
           <button type="button" class="row ${isSel ? 'on is-selected' : ''}" data-id="${escapeHtml(item.id)}">
-            <span class="ico domain-object" aria-hidden="true">🚗</span>
+            <span class="ico domain-object" aria-hidden="true">${ICON.object}</span>
             <span class="copy">
               <strong>${escapeHtml(item.label)}</strong>
               <em>${escapeHtml(sub)}</em>
@@ -550,7 +560,7 @@ export function createPanel(el, model, handlers) {
 
     let parkedListHtml = '';
     if (parkedOnStreet.length > 0) {
-      parkedListHtml = `<div class="rig-sec-title" style="margin-top: 12px;">Parked Cars (${parkedOnStreet.length})</div>`;
+      parkedListHtml = `<div class="rig-sec-title" style="margin-top: 12px;">Parked Cars (${parkedOnStreet.length}) · demo dwell</div>`;
       for (const item of parkedOnStreet) {
         const isSel = item.id === selectedId;
         const dwell = item.dwellMin || 0;
@@ -676,7 +686,7 @@ export function createPanel(el, model, handlers) {
     const tagClass = c.in_run ? 'live-tag' : 'muted-tag';
     camerasHtml += `
       <div class="rig-row ${c.in_run ? '' : 'muted-row'}">
-        <span class="ico domain-camera" aria-hidden="true">📷</span>
+        <span class="ico domain-camera" aria-hidden="true">${ICON.camera}</span>
         <span class="copy">
           <strong>${escapeHtml(c.name)}</strong>
           <em>${c.id} · ${yawLabel} · ${c.hfov_deg}° HFOV</em>
@@ -730,7 +740,7 @@ export function createPanel(el, model, handlers) {
           <strong>${escapeHtml(item.title)}</strong>
           <em>${escapeHtml(item.sub)}</em>
         </span>
-        <span class="rig-status muted-tag">Next pilot</span>
+        <span class="rig-status muted-tag">Not yet</span>
       </div>
     `;
   }
@@ -817,7 +827,7 @@ export function createPanel(el, model, handlers) {
         for (const item of state.recent) {
           const isSel = item.id === selectedId;
           let icoClass = 'domain-access';
-          let icoGlyph = '⚠';
+          let icoGlyph = ICON.sign;
           let title = item.label || 'Sign';
           let sub = item.street || 'Street not read';
           let metric = formatClock(item.t0);
@@ -827,16 +837,16 @@ export function createPanel(el, model, handlers) {
             icoClass = 'domain-parking';
             icoGlyph = 'P';
             title = item.street || 'Unnamed street';
-            sub = 'Parked car';
+            sub = 'Parked car · demo dwell';
             metric = formatDuration(item.dwellMin);
             const dwell = item.dwellMin || 0;
             metricClass = dwell >= 240 ? 'attention' : dwell >= 120 ? 'watch' : 'amber';
           } else if (item.kind === 'parking-sign') {
             icoClass = 'domain-waste';
-            icoGlyph = '🅿';
+            icoGlyph = ICON.parkingSign;
           } else if (item.kind === 'object') {
             icoClass = 'domain-object';
-            icoGlyph = '🚗';
+            icoGlyph = ICON.object;
             sub = item.state === 'moving' ? 'Moving' : 'Unknown motion';
           }
 

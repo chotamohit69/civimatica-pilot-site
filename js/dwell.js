@@ -2,8 +2,6 @@
 // (the same plate seen again later). Every UI that shows these values must label them "Demo".
 // ponytail: deterministic fake derived from the track id; delete this module once the pipeline exports measured dwell.
 
-export const DWELL_IS_DEMO = true;
-
 // FNV-1a hash of the id -> [0, 1), so a car's demo dwell never changes between reloads or views.
 function unit(id, salt) {
   let h = 2166136261 ^ salt;
@@ -31,22 +29,3 @@ export const DWELL_BINS = [
   { lo: 120, hi: 240, label: '2–4 h' },
   { lo: 240, hi: Infinity, label: '4 h +' }
 ];
-
-// Summary over parked tracks (e.g. one street's): count, median, share over 2 h, histogram bins.
-export function dwellSummary(parkedTracks) {
-  const mins = parkedTracks.map(dwellMinutes).sort((x, y) => x - y);
-  const n = mins.length;
-  return {
-    n,
-    medianMin: n ? Math.round((mins[(n - 1) >> 1] + mins[n >> 1]) / 2) : null,
-    over2hShare: n ? mins.filter(m => m > 120).length / n : null,
-    bins: DWELL_BINS.map(b => ({ label: b.label, n: mins.filter(m => m >= b.lo && m < b.hi).length }))
-  };
-}
-
-export function formatDwell(min) {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  if (!h) return `${m} min`;
-  return m ? `${h} h ${m} min` : `${h} h`;
-}

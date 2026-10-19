@@ -1,7 +1,7 @@
 // App entry point for Milan Pilot Dashboard
 import { loadModel, formatClock, formatDuration } from './data.js';
 import { createMap } from './mapview.js';
-import { createPanel } from './panel.js';
+import { createPanel, ICON } from './panel.js';
 
 const MAPBOX_TOKEN = 'pk.eyJ1IjoiaGFyc2gyMjMiLCJhIjoiY212MTExNGFlMDEwazJ4c2d2MGh0bDFnOCJ9.6UW5u88lDw-uW1T_9oV6jw';
 
@@ -146,7 +146,7 @@ async function init() {
       }
 
       let icoClass = 'domain-access';
-      let icoGlyph = '⚠';
+      let icoGlyph = ICON.sign;
       let title = item.label || 'Sign';
       let tagText = 'TRAFFIC SIGN';
       let tagClass = '';
@@ -163,13 +163,13 @@ async function init() {
         valHtml = `${formatDuration(item.dwellMin)}<small>Demo dwell</small>`;
       } else if (item.kind === 'parking-sign') {
         icoClass = 'domain-waste';
-        icoGlyph = '🅿';
+        icoGlyph = ICON.parkingSign;
         tagText = 'PARKING RULE';
         tagClass = 'attention';
         valHtml = `${Math.round((item.score || 0.9) * 100)}%<small>confidence</small>`;
       } else if (item.kind === 'object') {
         icoClass = 'domain-object';
-        icoGlyph = '🚗';
+        icoGlyph = ICON.object;
         tagText = item.state === 'moving' ? 'MOVING' : 'UNKNOWN STATE';
         tagClass = 'clear';
         valHtml = `${Math.round((item.score || 0.9) * 100)}%<small>confidence</small>`;
@@ -212,7 +212,7 @@ async function init() {
         : `–<small>No parked cars</small>`;
 
       detailEl.innerHTML = `
-        <span class="ico lg domain-parking" aria-hidden="true">🛣</span>
+        <span class="ico lg domain-parking" aria-hidden="true">${ICON.street}</span>
         <div class="detail-copy">
           <strong>
             <span>${escapeHtml(st.name)}</span>
