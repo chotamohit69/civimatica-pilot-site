@@ -1,16 +1,16 @@
 /* Civimatica Milan Pilot — Main Entry Point
-   - Loads runs.json, drive.json, scene.json, rig.json
+   - Loads runs.json, drive.json, scene.json
    - Asserts product figures and reconciliations
-   - Manages router and hash state (#/<tab>?street=...&sign=...&layers=...)
-   - Renders Planning Sheet shell and tabs
+   - Manages router and hash state (#/<tab>?street=...&car=...&sign=...&layers=...&t=...)
+   - Renders Planning Sheet shell, 3D Drive-through, and inventory tabs
 */
 
 import { CadastralMap, formatTime, formatClsLabel } from './map.js';
+import { DWELL_IS_DEMO, dwellMinutes, dwellSummary, formatDwell, DWELL_BINS } from './dwell.js';
 import {
   renderSignsView,
   renderParkingView,
   renderPrivacyView,
-  renderRigView,
   computeStreetDistances,
   computeTotalRouteDistance
 } from './views.js';
@@ -21,7 +21,9 @@ const intFmt = new Intl.NumberFormat('en-US');
 const state = {
   currentTab: 'sheet',
   selectedStreet: null,
+  selectedCar: null,
   selectedSign: null,
+  driveT: null,
   layers: {
     signs: true,
     parked: true,
@@ -29,10 +31,11 @@ const state = {
   },
   drive: null,
   scene: null,
-  rig: null,
   mapInstance: null
 };
 window.__state = state;
+
+let drive3dModule = null;
 
 // -------------------------------------------------------------
 // DATA LOADING & RECONCILIATION ASSERTIONS
@@ -47,26 +50,32 @@ async function initApp() {
     const runs = await runsResp.json();
     const run = runs[0];
 
-    const [driveResp, sceneResp, rigResp] = await Promise.all([
+    const [driveResp, sceneResp] = await Promise.all([
       fetch(run.drive),
-      fetch(run.scene),
-      fetch('data/rig.json')
+      fetch(run.scene)
     ]);
 
-    if (!driveResp.ok || !sceneResp.ok || !rigResp.ok) {
-      throw new Error('Failed to load drive, scene, or rig data');
+    if (!driveResp.ok || !sceneResp.ok) {
+      throw new Error('Failed to load drive or scene data');
     }
 
     state.drive = await driveResp.json();
     state.scene = await sceneResp.json();
-    state.rig = await rigResp.json();
-
     runDataAssertions(state.drive);
 
     if (loadingEl) loadingEl.hidden = true;
 
     // Listen to hash changes
     window.addEventListener('hashchange', handleRoute);
+
+    // Listen to visibility changes (pause 3D render loop when hidden)
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (drive3dModule) drive3dModule.pauseDrive3D();
+      } else if (state.currentTab === 'drive') {
+        if (drive3dModule) drive3dModule.resumeDrive3D();
+      }
+    });
 
     // Initial route handling
     handleRoute();
@@ -123,11 +132,27 @@ function runDataAssertions(drive) {
   const durSec = Math.round(totalDuration % 60);
   const durStr = `${durMin}:${durSec.toString().padStart(2, '0')}`;
   console.assert(durStr === '36:23', `Expected duration 36:23, got ${durStr}`);
+
+  // 5. Tally at t = duration equals sheet legend counts (2,148 / 231 / 838)
+  const signsAtDuration = signs.filter(t => t.t0 <= totalDuration).length;
+  const parkedAtDuration = parkedCars.filter(t => t.t0 <= totalDuration).length;
+  const objectsAtDuration = otherObjects.filter(t => t.t0 <= totalDuration).length;
+  console.assert(signsAtDuration === 2148, `Signs at duration expected 2148, got ${signsAtDuration}`);
+  console.assert(parkedAtDuration === 231, `Parked cars at duration expected 231, got ${parkedAtDuration}`);
+  console.assert(objectsAtDuration === 838, `Other objects at duration expected 838, got ${objectsAtDuration}`);
+
+  // 6. For every street, dwellSummary(parked).bins counts sum to its parked count
+  for (const s of (drive.streets || [])) {
+    const streetParked = parkedCars.filter(t => t.street === s.name);
+    const summary = dwellSummary(streetParked);
+    const sumBins = summary.bins.reduce((acc, b) => acc + b.n, 0);
+    console.assert(sumBins === streetParked.length, `Street ${s.name} dwell bins sum ${sumBins} != parked count ${streetParked.length}`);
+  }
 }
 
 // -------------------------------------------------------------
 // ROUTER & HASH STATE MANAGEMENT
-// Format: #/<tab>?street=...&sign=...&layers=...
+// Format: #/<tab>?street=...&sign=...&layers=...&t=...
 // -------------------------------------------------------------
 function parseHash() {
   const hash = window.location.hash || '#/sheet';
@@ -136,7 +161,10 @@ function parseHash() {
 
   const params = new URLSearchParams(queryPart || '');
   const street = params.get('street') || null;
+  const car = params.get('car') || null;
   const sign = params.get('sign') || null;
+  const tParam = params.get('t');
+  const t = tParam != null ? parseFloat(tParam) : null;
   const layersParam = params.get('layers');
 
   const layers = { signs: true, parked: true, objects: true };
@@ -147,11 +175,14 @@ function parseHash() {
     layers.objects = list.includes('objects');
   }
 
-  return { tab, street, sign, layers };
+  return { tab, street, car, sign, layers, t };
 }
 
 function updateHash() {
   const params = new URLSearchParams();
+  if (state.selectedCar) {
+    params.set('car', state.selectedCar.id);
+  }
   if (state.selectedStreet) {
     params.set('street', state.selectedStreet);
   }
@@ -177,11 +208,22 @@ function updateHash() {
 
 function handleRoute() {
   const parsed = parseHash();
-  const validTabs = ['sheet', 'signs', 'parking', 'privacy', 'rig'];
+  const validTabs = ['sheet', 'drive', 'signs', 'parking', 'privacy'];
   state.currentTab = validTabs.includes(parsed.tab) ? parsed.tab : 'sheet';
   state.selectedStreet = parsed.street;
   state.selectedSign = parsed.sign;
   state.layers = parsed.layers;
+  state.driveT = parsed.t;
+
+  if (state.drive && parsed.car) {
+    const car = (state.drive.tracks || []).find(t => t.id === parsed.car && t.kind === 'vehicle' && t.cls === 'car' && t.state === 'parked');
+    state.selectedCar = car || null;
+    if (car && car.street) {
+      state.selectedStreet = car.street;
+    }
+  } else {
+    state.selectedCar = null;
+  }
 
   updateNavTabs();
   renderCurrentView();
@@ -205,10 +247,10 @@ function updateNavTabs() {
 function renderCurrentView() {
   const viewPanels = {
     sheet: document.getElementById('view-sheet'),
+    drive: document.getElementById('view-drive'),
     signs: document.getElementById('view-signs'),
     parking: document.getElementById('view-parking'),
-    privacy: document.getElementById('view-privacy'),
-    rig: document.getElementById('view-rig')
+    privacy: document.getElementById('view-privacy')
   };
 
   for (const [key, panel] of Object.entries(viewPanels)) {
@@ -220,17 +262,28 @@ function renderCurrentView() {
     }
   }
 
+  // If leaving drive view, pause 3D render loop
+  if (state.currentTab !== 'drive' && drive3dModule) {
+    drive3dModule.pauseDrive3D();
+  }
+
   const activePanel = viewPanels[state.currentTab];
+  if (!activePanel) return;
+
   if (state.currentTab === 'sheet') {
     renderSheetTab(activePanel);
     setTimeout(() => {
       if (state.mapInstance && state.mapInstance.map) {
-        state.mapInstance.map.invalidateSize();
-        if (state.mapInstance.routeBounds && !state.selectedStreet) {
-          state.mapInstance.map.fitBounds(state.mapInstance.routeBounds, { padding: [16, 16] });
+        const map = state.mapInstance.map;
+        map.invalidateSize();
+        const sz = map.getSize();
+        if (sz && sz.x > 0 && sz.y > 0 && state.mapInstance.routeBounds && state.mapInstance.routeBounds.isValid() && !state.selectedStreet) {
+          map.fitBounds(state.mapInstance.routeBounds, { padding: [16, 16] });
         }
       }
-    }, 100);
+    }, 120);
+  } else if (state.currentTab === 'drive') {
+    showDriveTab(activePanel, state.driveT);
   } else if (state.currentTab === 'signs') {
     renderSignsView(activePanel, state.drive, (newHash) => {
       window.location.hash = newHash;
@@ -241,8 +294,29 @@ function renderCurrentView() {
     });
   } else if (state.currentTab === 'privacy') {
     renderPrivacyView(activePanel, state.drive);
-  } else if (state.currentTab === 'rig') {
-    renderRigView(activePanel, state.drive, state.rig);
+  }
+}
+
+async function showDriveTab(container, targetT = null) {
+  if (!drive3dModule) {
+    container.innerHTML = `
+      <div class="state-panel state-loading">
+        <p class="state-message">Building the clay city…</p>
+      </div>
+    `;
+    try {
+      drive3dModule = await import('./drive3d.js');
+      await drive3dModule.initDrive3D(container, state.drive, state.scene, null, targetT);
+    } catch (err) {
+      console.error('Failed to load drive3d:', err);
+      container.innerHTML = `
+        <div class="state-panel state-error">
+          <p class="state-message">WebGL drive-through view could not be loaded. Please return to the <a href="#/sheet">Planning Sheet</a>.</p>
+        </div>
+      `;
+    }
+  } else {
+    drive3dModule.resumeDrive3D(targetT);
   }
 }
 
@@ -296,9 +370,9 @@ function renderSheetTab(container) {
 
       <!-- Sidebar: Legend + Title Block (cols 9–12, rows 2-3) -->
       <div class="sheet-sidebar-col">
-        <!-- AMAT Test Plan Legend -->
+        <!-- Survey Objectives Legend -->
         <section class="legend-box" aria-labelledby="legend-heading">
-          <h2 id="legend-heading" class="legend-h2">AMAT Test Plan</h2>
+          <h2 id="legend-heading" class="legend-h2">Survey Objectives</h2>
           <div class="legend-entries">
             <!-- 1. Road signage -->
             <button type="button" class="legend-entry" data-layer-toggle="signs" aria-pressed="${state.layers.signs}">
@@ -348,7 +422,7 @@ function renderSheetTab(container) {
               <div class="legend-line">plate reads kept · text stays on the vehicle, never shown or exported</div>
               <div class="legend-gap">
                 <span class="mini-hatch" aria-hidden="true"></span>
-                <span>Legal vs illegal, turnover and dwell time: need bay rules and repeat passes; this drive passed each street once</span>
+                <span>Legal vs illegal, turnover and dwell time: need bay rules and repeat passes; this drive passed each street once (dwell shown as demo values)</span>
               </div>
             </div>
 
@@ -371,37 +445,8 @@ function renderSheetTab(container) {
           </div>
         </section>
 
-        <!-- Title Block -->
-        <section class="title-block" aria-labelledby="title-block-heading">
-          <h2 id="title-block-heading" class="sr-only">Drive Details</h2>
-          <dl class="title-block-grid">
-            <dt>Sheet</dt>
-            <dd translate="no">Drive milan_i84</dd>
-
-            <dt>Source</dt>
-            <dd>${drive.source?.url ? `<a href="${drive.source.url}" target="_blank" rel="noopener">YouTube drive video i84Ak9XpUUs</a>` : 'YouTube drive video i84Ak9XpUUs'}</dd>
-            <dt>Recorded</dt>
-            <dd>October 2025</dd>
-
-            <dt>Duration</dt>
-            <dd class="tnum">36:23</dd>
-
-            <dt>Distance</dt>
-            <dd>10.8 km, estimated</dd>
-
-            <dt>Cameras</dt>
-            <dd>${(drive.cameras || []).filter(c => c.in_run).map(c => c.note ? `${c.id} stand-in: ${c.note}` : c.id).join('; ')}</dd>
-
-            <dt>Positioning</dt>
-            <dd class="desc">No GNSS: route rebuilt from on-screen street names and OpenStreetMap; every position is estimated</dd>
-
-            <dt>Processed on</dt>
-            <dd>Jetson Orin Nano 8 GB</dd>
-
-            <dt>Base map</dt>
-            <dd>© OpenStreetMap contributors, ODbL</dd>
-          </dl>
-        </section>
+        <!-- Slot for Title Block / Street Panel / Car Panel -->
+        <div id="sheet-sidebar-slot" style="flex:1;display:flex;flex-direction:column;min-height:0;"></div>
       </div>
 
       <!-- Street Bar Card (cols 1–8, row 3 under map) -->
@@ -417,6 +462,7 @@ function renderSheetTab(container) {
           <div class="street-bar-detail" id="strip-detail" aria-live="polite">
             <span class="street-bar-detail-text" id="strip-detail-text">Select a street to inspect its drive segment and dim other marks.</span>
             <button type="button" class="btn-clear-street" id="btn-clear-street" hidden>Clear</button>
+            <a href="#/drive" class="btn-drive-through" id="btn-drive-through" hidden>Drive through it →</a>
           </div>
         </section>
       </div>
@@ -439,6 +485,8 @@ function renderSheetTab(container) {
   // Init Leaflet Cadastral Map
   state.mapInstance = new CadastralMap('map', state.scene, state.drive, (streetName) => {
     selectStreet(streetName);
+  }, (carTrack) => {
+    selectCar(carTrack);
   });
 
   // Render street bar
@@ -598,6 +646,7 @@ function renderStreetBar(container) {
   const clearBtn = container.querySelector('#btn-clear-street');
   if (clearBtn) {
     clearBtn.addEventListener('click', () => {
+      selectCar(null);
       selectStreet(null);
     });
   }
@@ -614,6 +663,7 @@ function formatMinSec(seconds) {
 function showStreetDetail(btn) {
   const textEl = document.getElementById('strip-detail-text');
   const clearBtn = document.getElementById('btn-clear-street');
+  const driveBtn = document.getElementById('btn-drive-through');
   if (!textEl) return;
 
   const name = btn.getAttribute('data-street');
@@ -623,14 +673,25 @@ function showStreetDetail(btn) {
   const parked = btn.getAttribute('data-parked') || '0';
 
   textEl.innerHTML = `<strong>${name}</strong> · ${formatMinSec(dur)} · ${dist} km · ${intFmt.format(signs)} signs · ${intFmt.format(parked)} parked cars`;
+
+  const isSelected = (state.selectedStreet === name);
   if (clearBtn) {
-    clearBtn.hidden = (state.selectedStreet !== name);
+    clearBtn.hidden = !isSelected;
+  }
+  if (driveBtn) {
+    driveBtn.hidden = !isSelected;
+    if (isSelected) {
+      const firstSeg = (state.drive.streets || []).find(s => s.name === name);
+      const firstT0 = firstSeg ? firstSeg.t0.toFixed(1) : '0.0';
+      driveBtn.setAttribute('href', `#/drive?t=${firstT0}`);
+    }
   }
 }
 
 function restoreStreetDetail() {
   const textEl = document.getElementById('strip-detail-text');
   const clearBtn = document.getElementById('btn-clear-street');
+  const driveBtn = document.getElementById('btn-drive-through');
   if (!textEl) return;
 
   if (state.selectedStreet) {
@@ -645,10 +706,180 @@ function restoreStreetDetail() {
   if (clearBtn) {
     clearBtn.hidden = true;
   }
+  if (driveBtn) {
+    driveBtn.hidden = true;
+  }
+}
+
+function updateSidebarSlot() {
+  const slot = document.getElementById('sheet-sidebar-slot');
+  if (!slot) return;
+
+  const drive = state.drive;
+  if (!drive) return;
+
+  // Case 1: Car selected
+  if (state.selectedCar) {
+    const car = state.selectedCar;
+    const dwell = dwellMinutes(car);
+    const bin = DWELL_BINS.find(b => dwell >= b.lo && dwell < b.hi);
+    const binLabel = bin ? bin.label : '—';
+    const scoreStr = car.score != null ? car.score.toFixed(2) : '—';
+
+    slot.innerHTML = `
+      <section class="street-detail-panel" aria-labelledby="car-panel-heading">
+        <div class="street-panel-header">
+          <h2 id="car-panel-heading" class="street-panel-title">Parked car</h2>
+          <button type="button" class="btn-clear-street" id="btn-clear-slot">Clear</button>
+        </div>
+        <dl class="title-block-grid">
+          <dt>Street</dt>
+          <dd><strong>${car.street || 'Street not read'}</strong></dd>
+
+          <dt>Seen at</dt>
+          <dd class="tnum">${formatTime(car.t0)} into the drive</dd>
+
+          <dt>Confirmed</dt>
+          <dd>${car.state === 'parked' ? 'Yes' : 'No'}</dd>
+
+          <dt>Score</dt>
+          <dd class="tnum">${scoreStr}</dd>
+
+          <dt>Dwell</dt>
+          <dd class="tnum">${formatDwell(dwell)} <span class="demo-tag"><span class="mini-hatch" aria-hidden="true"></span>Demo</span></dd>
+
+          <dt>Bin</dt>
+          <dd>${binLabel}</dd>
+
+          <dt>Position</dt>
+          <dd class="desc">Position estimated from one camera</dd>
+        </dl>
+      </section>
+    `;
+
+    const clearBtn = slot.querySelector('#btn-clear-slot');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        selectCar(null);
+        selectStreet(null);
+      });
+    }
+    return;
+  }
+
+  // Case 2: Street selected
+  if (state.selectedStreet) {
+    const streetName = state.selectedStreet;
+    const streets = drive.streets || [];
+    const streetSegs = streets.filter(s => s.name === streetName);
+    const dur = streetSegs.reduce((sum, s) => sum + (s.t1 - s.t0), 0);
+    const streetDists = computeStreetDistances(drive);
+    const distM = streetDists[streetName] || 0;
+    const distKm = distM / 1000;
+
+    const tracks = drive.tracks || [];
+    const streetSigns = tracks.filter(t => t.kind === 'sign' && t.street === streetName);
+    const streetParked = tracks.filter(t => t.kind === 'vehicle' && t.cls === 'car' && t.state === 'parked' && t.street === streetName);
+    const summary = dwellSummary(streetParked);
+    const maxBinN = Math.max(...summary.bins.map(b => b.n), 1);
+
+    slot.innerHTML = `
+      <section class="street-detail-panel" aria-labelledby="street-panel-heading">
+        <div class="street-panel-header">
+          <h2 id="street-panel-heading" class="street-panel-title">${streetName}</h2>
+          <button type="button" class="btn-clear-street" id="btn-clear-slot">Clear</button>
+        </div>
+        <dl class="title-block-grid" style="margin-bottom:6px;">
+          <dt>Drive time</dt>
+          <dd class="tnum">${formatMinSec(dur)}</dd>
+
+          <dt>Distance</dt>
+          <dd class="tnum">${distKm.toFixed(2)} km</dd>
+
+          <dt>Signs</dt>
+          <dd class="tnum">${intFmt.format(streetSigns.length)}</dd>
+
+          <dt>Parked cars</dt>
+          <dd class="tnum">${intFmt.format(streetParked.length)}</dd>
+        </dl>
+
+        <div class="dwell-section">
+          <div class="dwell-section-header">
+            <span class="dwell-section-title">Parking dwell</span>
+            <span class="demo-tag"><span class="mini-hatch" aria-hidden="true"></span>Demo</span>
+          </div>
+          <div class="dwell-kpi-row">
+            <div class="dwell-kpi">
+              <span class="dwell-kpi-label">Median dwell</span>
+              <span class="dwell-kpi-val tnum">${summary.medianMin != null ? formatDwell(summary.medianMin) : '—'}</span>
+            </div>
+            <div class="dwell-kpi">
+              <span class="dwell-kpi-label">Over 2 h</span>
+              <span class="dwell-kpi-val tnum">${summary.over2hShare != null ? `${Math.round(summary.over2hShare * 100)} %` : '—'}</span>
+            </div>
+          </div>
+          <div class="dwell-histogram">
+            ${summary.bins.map(b => {
+              const pct = maxBinN > 0 ? (b.n / maxBinN) * 100 : 0;
+              return `
+                <div class="dwell-bar-row">
+                  <span class="dwell-bar-label">${b.label}</span>
+                  <div class="dwell-bar-track">
+                    <div class="dwell-bar-fill" style="width: ${pct}%;"></div>
+                  </div>
+                  <span class="dwell-bar-count tnum">${b.n}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      </section>
+    `;
+
+    const clearBtn = slot.querySelector('#btn-clear-slot');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        selectStreet(null);
+      });
+    }
+    return;
+  }
+
+  // Case 3: Neither selected -> Default Title Block
+  const totalDistM = computeTotalRouteDistance(drive);
+  const routeKm = (totalDistM / 1000).toFixed(1);
+
+  slot.innerHTML = `
+    <section class="title-block" aria-labelledby="title-block-heading">
+      <h2 id="title-block-heading" class="sr-only">Drive Details</h2>
+      <dl class="title-block-grid">
+        <dt>Duration</dt>
+        <dd class="tnum">36:23</dd>
+
+        <dt>Distance</dt>
+        <dd>${routeKm} km, estimated</dd>
+
+        <dt>Cameras</dt>
+        <dd>Front camera only (1 of 4 rig cameras)</dd>
+
+        <dt>Positioning</dt>
+        <dd class="desc">${drive.source?.route_note || 'Estimated: no GNSS on this drive'}</dd>
+
+        <dt>Processed on</dt>
+        <dd>Jetson Orin Nano 8 GB</dd>
+
+        <dt>Base map</dt>
+        <dd>© OpenStreetMap contributors, ODbL</dd>
+      </dl>
+    </section>
+  `;
 }
 
 function selectStreet(streetName) {
   state.selectedStreet = streetName;
+  if (!streetName) {
+    state.selectedCar = null;
+  }
 
   // Update button highlights
   document.querySelectorAll('.street-seg-btn').forEach(b => {
@@ -663,9 +894,43 @@ function selectStreet(streetName) {
   restoreStreetDetail();
 
   if (state.mapInstance) {
+    if (!streetName) {
+      state.mapInstance.selectCar(null);
+    }
     state.mapInstance.selectStreet(streetName);
   }
 
+  updateSidebarSlot();
+  updateHash();
+}
+
+function selectCar(carTrack) {
+  state.selectedCar = carTrack;
+  if (carTrack) {
+    if (carTrack.street) {
+      state.selectedStreet = carTrack.street;
+    }
+    // Update strip button highlights
+    document.querySelectorAll('.street-seg-btn').forEach(b => {
+      const name = b.getAttribute('data-street');
+      if (state.selectedStreet && name === state.selectedStreet) {
+        b.classList.add('is-selected');
+      } else {
+        b.classList.remove('is-selected');
+      }
+    });
+    if (state.mapInstance) {
+      state.mapInstance.selectStreet(state.selectedStreet);
+      state.mapInstance.selectCar(carTrack);
+    }
+    restoreStreetDetail();
+  } else {
+    if (state.mapInstance) {
+      state.mapInstance.selectCar(null);
+    }
+  }
+
+  updateSidebarSlot();
   updateHash();
 }
 
@@ -704,9 +969,22 @@ function applySheetState() {
     state.mapInstance.setSignFilter(state.selectedSign);
   }
 
-  // Apply street selection
-  selectStreet(state.selectedStreet);
+  // Apply street & car selection
+  if (state.selectedCar) {
+    selectCar(state.selectedCar);
+  } else {
+    selectStreet(state.selectedStreet);
+  }
+  updateSidebarSlot();
 }
 
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (state.selectedCar || state.selectedStreet) {
+      selectCar(null);
+      selectStreet(null);
+    }
+  }
+});
 // Kick off
 initApp();

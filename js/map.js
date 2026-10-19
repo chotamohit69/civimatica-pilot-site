@@ -78,13 +78,13 @@ export function formatClsLabel(cls) {
 }
 
 export class CadastralMap {
-  constructor(elementId, sceneData, driveData, onStreetSelect) {
+  constructor(elementId, sceneData, driveData, onStreetSelect, onCarSelect) {
     this.elementId = elementId;
     this.scene = sceneData;
     this.drive = driveData;
     this.origin = sceneData.origin;
     this.onStreetSelect = onStreetSelect;
-
+    this.onCarSelect = onCarSelect;
     this.map = null;
     this.routeBounds = null;
     this.streetSegments = []; // { name, t0, t1, latlngs, polyline }
@@ -101,6 +101,8 @@ export class CadastralMap {
     };
     this.currentSignFilter = null;
     this.selectedStreet = null;
+    this.selectedCar = null;
+    this.selectedCarRing = null;
     this.selectedRouteLines = [];
 
     this.init();
@@ -122,8 +124,11 @@ export class CadastralMap {
     window.addEventListener('resize', () => {
       if (this.map) {
         this.map.invalidateSize();
-        if (this.routeBounds && !this.selectedStreet) {
-          this.map.fitBounds(this.routeBounds, { padding: [16, 16] });
+        if (this.routeBounds && this.routeBounds.isValid() && !this.selectedStreet) {
+          const sz = this.map.getSize();
+          if (sz && sz.x > 0 && sz.y > 0) {
+            this.map.fitBounds(this.routeBounds, { padding: [16, 16] });
+          }
         }
       }
     });
@@ -401,14 +406,16 @@ export class CadastralMap {
           color: '#ffffff',
           weight: 1
         });
-        marker.bindPopup(`
-          <div><strong>Parked car</strong> · ${street}</div>
-          <div style="color:#4a4d52;margin-top:2px;">seen ${timeStr} · confidence ${conf} · position estimated · plate not shown</div>
-        `);
+
+        marker.on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          if (this.onCarSelect) {
+            this.onCarSelect(tr);
+          }
+        });
 
         this.layers.parked.addLayer(marker);
         this.allMarkers.push({ track: tr, marker, type: 'parked', defaultColor: '#1f5fbf' });
-
       } else if (tr.kind === 'object' || (tr.kind === 'vehicle' && tr.cls !== 'car')) {
         const objLabel = formatClsLabel(tr.cls);
         const marker = new DiamondMarker(latlng, {
@@ -444,6 +451,10 @@ export class CadastralMap {
         item.marker.options.size = shapeSize;
         item.marker.redraw();
       }
+    }
+
+    if (this.selectedCarRing) {
+      this.selectedCarRing.setRadius(isStreetZoom ? 9 : 7);
     }
   }
 
@@ -516,14 +527,43 @@ export class CadastralMap {
     // Dim marks on other streets to ~30% opacity
     for (const item of this.allMarkers) {
       const isOnStreet = item.track.street === streetName;
+      const isSelectedCar = this.selectedCar && item.track.id === this.selectedCar.id;
+      const fullOpacity = isOnStreet || isSelectedCar;
       item.marker.setStyle({
-        fillOpacity: isOnStreet ? 1.0 : 0.3,
-        opacity: isOnStreet ? 1.0 : 0.3
+        fillOpacity: fullOpacity ? 1.0 : 0.3,
+        opacity: fullOpacity ? 1.0 : 0.3
       });
     }
 
     if (bounds.isValid()) {
       this.map.fitBounds(bounds, { padding: [36, 36], maxZoom: 17 });
+    }
+  }
+
+  selectCar(carTrack) {
+    if (this.selectedCarRing) {
+      this.map.removeLayer(this.selectedCarRing);
+      this.selectedCarRing = null;
+    }
+    this.selectedCar = carTrack;
+    if (!carTrack || !carTrack.xy) return;
+
+    const latlng = xyToLatLng(this.origin, carTrack.xy[0], carTrack.xy[1]);
+    const z = this.map ? this.map.getZoom() : 14;
+    const r = (z >= 15) ? 9 : 7;
+    this.selectedCarRing = L.circleMarker(latlng, {
+      radius: r,
+      color: '#5b3fa6',
+      weight: 2.5,
+      fillColor: 'transparent',
+      fillOpacity: 0,
+      interactive: false
+    }).addTo(this.map);
+
+    for (const item of this.allMarkers) {
+      if (item.track && item.track.id === carTrack.id) {
+        item.marker.setStyle({ fillOpacity: 1.0, opacity: 1.0 });
+      }
     }
   }
 }
