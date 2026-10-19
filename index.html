@@ -1,109 +1,69 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Civimatica · Milan Street Perception Pilot</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fafaf7">
+  <meta name="color-scheme" content="light">
+  <title>Civimatica Milan Pilot — Planning Sheet</title>
 
-  <!-- Leaflet 1.9.4 -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <!-- Three.js 0.169.0 via Importmap -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
-    }
-  }
-  </script>
-
-  <!-- Dashboard Stylesheet -->
+  <link rel="preload" href="fonts/TitilliumWeb-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+  <a href="#main" class="skip-link">Skip to main content</a>
 
-  <!-- Top Header -->
-  <header class="top-header">
-    <div class="brand-section">
-      <div class="logo-badge">
-        <span class="dot"></span>
-        CIVIMATICA
-      </div>
-      <span class="pilot-tag">Milan Pilot</span>
-      <div class="source-info-note">
-        Pipeline run on a Milan drive video (YouTube i84Ak9XpUUs) · Route rebuilt from on-screen street names + OpenStreetMap · No GNSS in this video
-      </div>
+  <header class="top-bar">
+    <div class="top-bar-brand">
+      <svg class="brand-mark" width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M 3 3 L 15 3 L 21 9 L 21 21 L 3 21 Z" fill="#ffffff" stroke="#1c1e21" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M 15 3 L 15 9 L 21 9 Z" fill="#ebeae5" stroke="#1c1e21" stroke-width="1.2" stroke-linejoin="round"/>
+        <line x1="8" y1="3" x2="8" y2="21" stroke="#ebeae5" stroke-width="1"/>
+        <line x1="3" y1="14" x2="21" y2="14" stroke="#ebeae5" stroke-width="1"/>
+        <path d="M 6 17 C 7.5 12, 11 15, 13.5 10.5 C 15 8, 17 7.5, 18 7.5" stroke="#5b3fa6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="6" cy="17" r="1.5" fill="#ffffff" stroke="#1c1e21" stroke-width="1.2"/>
+        <rect x="16.5" y="6" width="3" height="3" fill="#1c1e21"/>
+      </svg>
+      <span class="brand-title" translate="no">Civimatica</span>
+      <span class="brand-sep" aria-hidden="true">/</span>
+      <span class="brand-subtitle">Milan pilot</span>
     </div>
-    <div class="header-meta">
-      <div class="device-badge">Jetson Orin Nano 8 GB</div>
+
+    <div class="top-bar-drive">
+      <label for="drive-select" class="drive-label">Drive</label>
+      <select id="drive-select" class="drive-select">
+        <option value="milan_i84">Downtown Milan drive · Oct 2025 video</option>
+      </select>
     </div>
+
+    <nav class="nav-tabs" aria-label="Views">
+      <a href="#/sheet" class="tab-link" data-tab="sheet">Sheet</a>
+      <a href="#/signs" class="tab-link" data-tab="signs">Signs</a>
+      <a href="#/parking" class="tab-link" data-tab="parking">Parking</a>
+      <a href="#/privacy" class="tab-link" data-tab="privacy">Plates &amp; Privacy</a>
+      <a href="#/rig" class="tab-link" data-tab="rig">Rig &amp; Device</a>
+    </nav>
   </header>
 
-  <!-- Global Playback & Scrubber Controls -->
-  <div class="playback-bar">
-    <div class="playback-controls">
-      <div class="ctrl-group">
-        <button class="btn-ctrl" id="btn-play-toggle">► Play</button>
-        <div class="speed-pills">
-          <button class="speed-pill active" data-speed="1">1x</button>
-          <button class="speed-pill" data-speed="4">4x</button>
-          <button class="speed-pill" data-speed="16">16x</button>
-          <button class="speed-pill" data-speed="64">64x</button>
-        </div>
-        <div class="time-display" id="time-display">00:00 / --:--</div>
-      </div>
-      <div class="ctrl-group">
-        <div class="street-pill" id="street-pill">Connecting route...</div>
-      </div>
+  <main id="main" class="main-content" tabindex="-1">
+    <div id="state-loading" class="state-panel state-loading">
+      <p class="state-message">Loading drive…</p>
     </div>
 
-    <!-- Scrubber with Street Bands -->
-    <div class="scrubber-wrap" id="scrubber-wrap">
-      <div class="scrubber-bands" id="scrubber-bands"></div>
-      <div class="scrubber-progress" id="scrubber-progress"></div>
-      <div class="scrubber-playhead" id="scrubber-playhead"></div>
+    <div id="state-error" class="state-panel state-error" hidden>
+      <p class="state-message">Couldn't load the drive data. Reload the page; if it keeps failing, check that data/milan_i84/drive.json is deployed.</p>
     </div>
-  </div>
 
-  <!-- Navigation Bar -->
-  <nav class="nav-bar">
-    <button class="nav-tab active" data-section="street">Street 3D</button>
-    <button class="nav-tab" data-section="overview">Overview</button>
-    <button class="nav-tab" data-section="map">2D Map</button>
-    <button class="nav-tab" data-section="cameras">Cameras &amp; Rig</button>
-    <button class="nav-tab" data-section="signs">Signs</button>
-    <button class="nav-tab" data-section="parking">Parking</button>
-    <button class="nav-tab" data-section="device">Model &amp; Device</button>
-    <button class="nav-tab" data-section="privacy">Privacy</button>
-  </nav>
+    <div id="view-sheet" class="view-panel" hidden></div>
+    <div id="view-signs" class="view-panel" hidden></div>
+    <div id="view-parking" class="view-panel" hidden></div>
+    <div id="view-privacy" class="view-panel" hidden></div>
+    <div id="view-rig" class="view-panel" hidden></div>
+  </main>
 
-  <!-- Section 2: Street (Centrepiece, 3D Clay Model) -->
-  <main class="view-container active" id="view-street"></main>
-
-  <!-- Section 1: Overview -->
-  <main class="view-container" id="view-overview"></main>
-
-  <!-- Section 3: 2D Map -->
-  <main class="view-container" id="view-map"></main>
-
-  <!-- Section 4: Cameras & Rig -->
-  <main class="view-container" id="view-cameras"></main>
-
-  <!-- Section 5: Signs -->
-  <main class="view-container" id="view-signs"></main>
-
-  <!-- Section 6: Parking -->
-  <main class="view-container" id="view-parking"></main>
-
-  <!-- Section 7: Model & Device -->
-  <main class="view-container" id="view-device"></main>
-
-  <!-- Section 8: Privacy -->
-  <main class="view-container" id="view-privacy"></main>
-
-  <!-- Main Application Entrypoint -->
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

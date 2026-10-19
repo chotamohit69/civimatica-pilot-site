@@ -1,296 +1,529 @@
-import { state } from './state.js';
-import { getSignFamily, formatTime } from './data.js';
+/* Civimatica Milan Pilot — Leaflet Cadastral Map
+   - NO tile layer, base drawn from scene.json
+   - Metric scale bar, authored north arrow, attribution
+   - Route polyline with dashed unread segments and start/end markers
+   - Canvas markers: signs (red circle), parked cars (blue square), objects (green diamond)
+   - Dimming of marks not on selected street (~30% opacity)
+*/
 
-const STREET_PALETTE = [
-  '#3D7BD9', '#2BB3A3', '#E8A33D', '#9B59B6', '#3498DB',
-  '#E67E22', '#1ABC9C', '#F1C40F', '#E74C3C', '#2ECC71'
-];
-
-export class MapSection {
-  constructor(container) {
-    this.container = container;
-    this.map = null;
-    this.egoMarker = null;
-    this.markersLayer = null;
-    this.bounds = null;
-
-    state.on('dataLoaded', () => this.initMap());
-    state.on('timeUpdate', () => this.updateEgoMarker());
-    state.on('sectionChange', (sec) => {
-      if (sec === 'map' && this.map) {
-        requestAnimationFrame(() => {
-          this.map.invalidateSize();
-          if (this.bounds) this.map.fitBounds(this.bounds, { padding: [40, 40] });
-        });
-        setTimeout(() => {
-          if (this.map) {
-            this.map.invalidateSize();
-          }
-        }, 120);
-      }
-    });
-  }
-
-  xyToLatLon(x, y) {
-    const origin = (state.scene && state.scene.origin) ? state.scene.origin : { lat: 45.478, lon: 9.176 };
-    const lat0 = origin.lat, lon0 = origin.lon;
-    const lat = lat0 + y / 110540.0;
-    const lon = lon0 + x / (111320.0 * Math.cos((lat0 * Math.PI) / 180.0));
-    return [lat, lon];
-  }
-
-  initMap() {
-    this.container.innerHTML = `
-      <div id="leaflet-map" class="leaflet-map-wrap"></div>
-      <div class="map-legend">
-        <div style="font-weight: 700; margin-bottom: 0.5rem; color: #FFFFFF;">Map Legend</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #2BB3A3; border: 2px solid #FFFFFF;"></span> Ego Vehicle</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #3D7BD9;"></span> Route by Street</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #E8A33D;"></span> Parked (Confirmed)</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #D9483B;"></span> Prohibitory Signs</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #2F6FDE;"></span> Mandatory Signs</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #F2C14E;"></span> Warning Signs</div>
-      </div>
-    `;
-
-    const scene = state.scene;
-    const drive = state.drive;
-    if (!scene || !drive) return;
-
-    const origin = scene.origin || { lat: 45.4782, lon: 9.1764 };
-
-    if (this.map) {
-      this.map.remove();
+// Extend Leaflet Canvas to draw square and diamond markers
+if (typeof L !== 'undefined' && L.Canvas) {
+  L.Canvas.include({
+    _updateSquare(layer) {
+      if (!this._ctx || layer._empty()) return;
+      const p = layer._point;
+      const s = layer.options.size || 7;
+      const half = s / 2;
+      const ctx = this._ctx;
+      ctx.beginPath();
+      ctx.rect(p.x - half, p.y - half, s, s);
+      this._fillStroke(ctx, layer);
+    },
+    _updateDiamond(layer) {
+      if (!this._ctx || layer._empty()) return;
+      const p = layer._point;
+      const s = layer.options.size || 7;
+      const half = s / 2;
+      const ctx = this._ctx;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - half);
+      ctx.lineTo(p.x + half, p.y);
+      ctx.lineTo(p.x, p.y + half);
+      ctx.lineTo(p.x - half, p.y);
+      ctx.closePath();
+      this._fillStroke(ctx, layer);
     }
+  });
+}
 
-    this.map = L.map('leaflet-map', {
-      center: [origin.lat, origin.lon],
-      zoom: 15,
-      zoomControl: true
-    });
-
-    // OSM Tiles with attribution
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors, ODbL 1.0',
-      maxZoom: 19
-    }).addTo(this.map);
-
-    this.markersLayer = L.layerGroup().addTo(this.map);
-
-    // Build route coloured by street
-    this.buildStreetRoutePolylines();
-
-    // Build sign and vehicle markers (limited for smooth rendering)
-    this.buildTrackMarkers();
-
-    // Create ego vehicle marker
-    const egoIcon = L.divIcon({
-      className: 'ego-leaflet-icon',
-      html: `<div style="width: 18px; height: 18px; background: #2BB3A3; border: 3px solid #FFFFFF; border-radius: 50%; box-shadow: 0 0 12px rgba(43, 179, 163, 1);"></div>`,
-      iconSize: [18, 18],
-      iconAnchor: [9, 9]
-    });
-
-    const initCoord = this.xyToLatLon(drive.route.x[0] || 0, drive.route.y[0] || 0);
-    this.egoMarker = L.marker(initCoord, { icon: egoIcon, zIndexOffset: 1000 }).addTo(this.map);
-
-    this.updateEgoMarker();
-  }
-
-  buildStreetRoutePolylines() {
-    const drive = state.drive;
-    if (!drive || !drive.route || !drive.route.x) return;
-
-    const rx = drive.route.x;
-    const ry = drive.route.y;
-    const rt = drive.route.t;
-    const allLatLngs = [];
-
-    // Complete background glow line
-    for (let i = 0; i < rx.length; i++) {
-      allLatLngs.push(this.xyToLatLon(rx[i], ry[i]));
-    }
-
-    if (allLatLngs.length > 0) {
-      this.bounds = L.latLngBounds(allLatLngs);
-      this.map.fitBounds(this.bounds, { padding: [40, 40] });
-    }
-
-    L.polyline(allLatLngs, {
-      color: '#1A202C',
-      weight: 8,
-      opacity: 0.6
-    }).addTo(this.map);
-
-    // If streets are defined, color route segments by street
-    const streets = drive.streets || [];
-    if (streets.length > 0) {
-      streets.forEach((st, idx) => {
-        const segLatLngs = [];
-        const segTimes = [];
-        const col = STREET_PALETTE[idx % STREET_PALETTE.length];
-
-        for (let i = 0; i < rt.length; i++) {
-          if (rt[i] >= st.t0 && rt[i] <= st.t1) {
-            segLatLngs.push(allLatLngs[i]);
-            segTimes.push(rt[i]);
-          }
-        }
-
-        if (segLatLngs.length > 1) {
-          const poly = L.polyline(segLatLngs, {
-            color: col,
-            weight: 5,
-            opacity: 0.95
-          }).addTo(this.map);
-
-          poly.bindTooltip(st.name, { sticky: true });
-
-          poly.on('click', (e) => {
-            const clickLL = e.latlng;
-            let closestIdx = 0, minDist = Infinity;
-            for (let j = 0; j < segLatLngs.length; j++) {
-              const d = clickLL.distanceTo(segLatLngs[j]);
-              if (d < minDist) {
-                minDist = d;
-                closestIdx = j;
-              }
-            }
-            if (segTimes[closestIdx] !== undefined) {
-              state.setTime(segTimes[closestIdx]);
-            }
-          });
-        }
-      });
+export const SquareMarker = (typeof L !== 'undefined' && L.CircleMarker) ? L.CircleMarker.extend({
+  _updatePath() {
+    if (this._renderer && this._renderer._updateSquare) {
+      this._renderer._updateSquare(this);
     } else {
-      // Fallback single colored polyline
-      const poly = L.polyline(allLatLngs, {
-        color: '#3D7BD9',
-        weight: 5,
-        opacity: 0.9
-      }).addTo(this.map);
+      L.CircleMarker.prototype._updatePath.call(this);
+    }
+  }
+}) : null;
 
-      poly.on('click', (e) => {
-        const clickLL = e.latlng;
-        let closestIdx = 0, minDist = Infinity;
-        for (let i = 0; i < allLatLngs.length; i++) {
-          const d = clickLL.distanceTo(allLatLngs[i]);
-          if (d < minDist) {
-            minDist = d;
-            closestIdx = i;
-          }
+export const DiamondMarker = (typeof L !== 'undefined' && L.CircleMarker) ? L.CircleMarker.extend({
+  _updatePath() {
+    if (this._renderer && this._renderer._updateDiamond) {
+      this._renderer._updateDiamond(this);
+    } else {
+      L.CircleMarker.prototype._updatePath.call(this);
+    }
+  }
+}) : null;
+
+export function xyToLatLng(origin, x, y) {
+  const lat = origin.lat + y / 110540;
+  const lon = origin.lon + x / (111320 * Math.cos(origin.lat * Math.PI / 180));
+  return [lat, lon];
+}
+
+export function formatTime(seconds) {
+  if (seconds == null || isNaN(seconds)) return '00:00';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+export function formatClsLabel(cls) {
+  if (!cls) return '';
+  return cls.replace(/_sign$/, '')
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+export class CadastralMap {
+  constructor(elementId, sceneData, driveData, onStreetSelect) {
+    this.elementId = elementId;
+    this.scene = sceneData;
+    this.drive = driveData;
+    this.origin = sceneData.origin;
+    this.onStreetSelect = onStreetSelect;
+
+    this.map = null;
+    this.routeBounds = null;
+    this.streetSegments = []; // { name, t0, t1, latlngs, polyline }
+    this.allMarkers = []; // { track, marker, type }
+    this.layers = {
+      signs: null,
+      parked: null,
+      objects: null
+    };
+    this.layerVisibility = {
+      signs: true,
+      parked: true,
+      objects: true
+    };
+    this.currentSignFilter = null;
+    this.selectedStreet = null;
+    this.selectedRouteLines = [];
+
+    this.init();
+  }
+
+  init() {
+    const mapEl = document.getElementById(this.elementId);
+    if (!mapEl) return;
+
+    this.map = L.map(this.elementId, {
+      preferCanvas: true,
+      attributionControl: false,
+      zoomControl: true,
+      boxZoom: false,
+      zoomSnap: 0.1,
+      zoomDelta: 0.5
+    });
+
+    window.addEventListener('resize', () => {
+      if (this.map) {
+        this.map.invalidateSize();
+        if (this.routeBounds && !this.selectedStreet) {
+          this.map.fitBounds(this.routeBounds, { padding: [16, 16] });
         }
-        if (rt[closestIdx] !== undefined) {
-          state.setTime(rt[closestIdx]);
+      }
+    });
+
+    this.map.on('zoomend', () => {
+      this.updateMarkerSizes();
+    });
+
+    // Custom attribution (without the flag) and scale
+    L.control.attribution({ position: 'bottomright', prefix: '<a href="https://leafletjs.com">Leaflet</a>' })
+      .addTo(this.map)
+      .addAttribution(this.scene.attribution || '© OpenStreetMap contributors, ODbL');
+
+    L.control.scale({ imperial: false, position: 'bottomleft' })
+      .addTo(this.map);
+
+    this.renderBase();
+    this.renderRoute();
+    this.renderTracks();
+
+    // Fit map tightly to route with small padding
+    if (this.routeBounds) {
+      this.map.fitBounds(this.routeBounds, { padding: [16, 16] });
+    }
+    this.updateMarkerSizes();
+  }
+
+  renderBase() {
+    const origin = this.origin;
+    const canvasRenderer = L.canvas();
+
+    // 1. Areas
+    if (this.scene.areas && Array.isArray(this.scene.areas)) {
+      const greenKinds = new Set(['park', 'garden', 'grass', 'wood', 'pitch', 'playground', 'dog_park']);
+      for (const area of this.scene.areas) {
+        if (!area.pts || area.pts.length < 3) continue;
+        const latlngs = area.pts.map(p => xyToLatLng(origin, p[0], p[1]));
+        const isGreen = greenKinds.has(area.kind);
+        const isWater = area.kind === 'water';
+        const fillColor = isGreen ? '#e4eadc' : isWater ? '#dde6ee' : '#efeee9';
+
+        L.polygon(latlngs, {
+          fillColor,
+          fillOpacity: 1,
+          stroke: false,
+          interactive: false,
+          renderer: canvasRenderer
+        }).addTo(this.map);
+      }
+    }
+
+    // 2. Buildings
+    if (this.scene.buildings && Array.isArray(this.scene.buildings)) {
+      for (const bld of this.scene.buildings) {
+        if (!bld.pts || bld.pts.length < 3) continue;
+        const latlngs = bld.pts.map(p => xyToLatLng(origin, p[0], p[1]));
+        L.polygon(latlngs, {
+          fillColor: '#ebeae5',
+          fillOpacity: 1,
+          color: '#d6d5cf',
+          weight: 1,
+          interactive: false,
+          renderer: canvasRenderer
+        }).addTo(this.map);
+      }
+    }
+
+    // 3. Roads (casing + white inner)
+    if (this.scene.roads && Array.isArray(this.scene.roads)) {
+      for (const road of this.scene.roads) {
+        if (!road.pts || road.pts.length < 2) continue;
+        const latlngs = road.pts.map(p => xyToLatLng(origin, p[0], p[1]));
+        // Casing
+        L.polyline(latlngs, {
+          color: '#d9d8d2',
+          weight: 4.5,
+          lineCap: 'round',
+          lineJoin: 'round',
+          interactive: false,
+          renderer: canvasRenderer
+        }).addTo(this.map);
+        // Inner white
+        L.polyline(latlngs, {
+          color: '#ffffff',
+          weight: 2.5,
+          lineCap: 'round',
+          lineJoin: 'round',
+          interactive: false,
+          renderer: canvasRenderer
+        }).addTo(this.map);
+      }
+    }
+
+    // 4. Rails (thin dashed)
+    if (this.scene.rails && Array.isArray(this.scene.rails)) {
+      for (const rail of this.scene.rails) {
+        if (!rail.pts || rail.pts.length < 2) continue;
+        const latlngs = rail.pts.map(p => xyToLatLng(origin, p[0], p[1]));
+        L.polyline(latlngs, {
+          color: '#c4c3bd',
+          weight: 1,
+          dashArray: '4, 4',
+          interactive: false,
+          renderer: canvasRenderer
+        }).addTo(this.map);
+      }
+    }
+  }
+
+  renderRoute() {
+    const origin = this.origin;
+    const r = this.drive.route;
+    if (!r || !r.x || !r.y || !r.t) return;
+
+    const xs = r.x;
+    const ys = r.y;
+    const ts = r.t;
+    const n = xs.length;
+    if (n < 2) return;
+
+    const fullLatLngs = [];
+    for (let i = 0; i < n; i++) {
+      fullLatLngs.push(xyToLatLng(origin, xs[i], ys[i]));
+    }
+    this.routeBounds = L.latLngBounds(fullLatLngs);
+
+    const streets = this.drive.streets || [];
+    // Helper to find street at time t
+    const getStreetAtTime = (t) => {
+      for (const s of streets) {
+        if (t >= s.t0 && t <= s.t1) return s.name;
+      }
+      return null;
+    };
+
+    // Break route into continuous chunks (named vs unread)
+    let currentChunk = [fullLatLngs[0]];
+    let currentStreet = getStreetAtTime(ts[0]);
+
+    for (let i = 1; i < n; i++) {
+      const st = getStreetAtTime(ts[i]);
+      if (st === currentStreet) {
+        currentChunk.push(fullLatLngs[i]);
+      } else {
+        // flush previous chunk
+        this._drawRouteChunk(currentChunk, currentStreet, origin);
+        // start new chunk from boundary point
+        currentChunk = [fullLatLngs[i - 1], fullLatLngs[i]];
+        currentStreet = st;
+      }
+    }
+    if (currentChunk.length >= 2) {
+      this._drawRouteChunk(currentChunk, currentStreet, origin);
+    }
+
+    // Store street polyline latlngs for each street segment
+    for (const s of streets) {
+      const segLatLngs = [];
+      for (let i = 0; i < n; i++) {
+        if (ts[i] >= s.t0 && ts[i] <= s.t1) {
+          segLatLngs.push(fullLatLngs[i]);
+        }
+      }
+      if (segLatLngs.length >= 2) {
+        this.streetSegments.push({
+          name: s.name,
+          t0: s.t0,
+          t1: s.t1,
+          latlngs: segLatLngs
+        });
+      }
+    }
+
+    // Start marker (open ink ring)
+    const startPoint = fullLatLngs[0];
+    const startMarker = L.circleMarker(startPoint, {
+      radius: 5,
+      color: '#1c1e21',
+      weight: 2,
+      fillColor: '#ffffff',
+      fillOpacity: 1
+    }).addTo(this.map);
+    startMarker.bindTooltip('Start 00:00', { permanent: false, direction: 'top' });
+
+    // End marker (filled ink square)
+    const endPoint = fullLatLngs[n - 1];
+    const endDuration = formatTime(this.drive.duration_s || ts[n - 1]);
+    const endMarker = new SquareMarker(endPoint, {
+      size: 9,
+      color: '#1c1e21',
+      weight: 1,
+      fillColor: '#1c1e21',
+      fillOpacity: 1
+    }).addTo(this.map);
+    endMarker.bindTooltip(`End ${endDuration}`, { permanent: false, direction: 'top' });
+  }
+
+  _drawRouteChunk(latlngs, streetName, origin) {
+    if (latlngs.length < 2) return;
+    const isNamed = streetName !== null;
+
+    // 1px paper-white casing around the 3px ink route line so it reads through
+    L.polyline(latlngs, {
+      color: '#fafaf7',
+      weight: 5,
+      lineCap: 'round',
+      lineJoin: 'round',
+      interactive: false
+    }).addTo(this.map);
+
+    const line = L.polyline(latlngs, {
+      color: '#1c1e21',
+      weight: 3,
+      dashArray: isNamed ? null : '5, 5',
+      lineCap: 'round',
+      lineJoin: 'round'
+    }).addTo(this.map);
+
+    // Hover tooltip: street name + clock time
+    line.on('mouseover', (e) => {
+      const label = isNamed ? streetName : 'Street not read';
+      line.bindTooltip(label, { sticky: true }).openTooltip(e.latlng);
+    });
+    if (isNamed) {
+      line.on('click', () => {
+        if (this.onStreetSelect) {
+          this.onStreetSelect(streetName);
         }
       });
     }
   }
 
-  buildTrackMarkers() {
-    const drive = state.drive;
-    if (!drive || !drive.tracks) return;
+  renderTracks() {
+    const origin = this.origin;
+    this.layers.signs = L.layerGroup().addTo(this.map);
+    this.layers.parked = L.layerGroup().addTo(this.map);
+    this.layers.objects = L.layerGroup().addTo(this.map);
 
-    this.markersLayer.clearLayers();
+    const tracks = this.drive.tracks || [];
 
-    // Filter and limit markers to keep map responsive
-    const allSigns = drive.tracks.filter(t => t.kind === 'sign');
-    const allParked = drive.tracks.filter(t => t.kind === 'vehicle' && t.state === 'parked' && t.confirmed);
+    for (const tr of tracks) {
+      if (!tr.xy || tr.xy.length < 2) continue;
+      const latlng = xyToLatLng(origin, tr.xy[0], tr.xy[1]);
+      const street = tr.street || 'street not read';
+      const timeStr = formatTime(tr.t0);
+      const timeRange = (tr.t1 != null && tr.t1 !== tr.t0)
+        ? `${formatTime(tr.t0)}–${formatTime(tr.t1)}`
+        : timeStr;
+      const conf = (tr.score != null) ? tr.score.toFixed(2) : '—';
+      const nDetections = tr.n_tracks || 1;
 
-    // Sample signs evenly if many
-    const signStep = Math.max(1, Math.floor(allSigns.length / 250));
-    const sampledSigns = [];
-    for (let i = 0; i < allSigns.length; i += signStep) {
-      sampledSigns.push(allSigns[i]);
-    }
-
-    // Sample parked cars
-    const parkedStep = Math.max(1, Math.floor(allParked.length / 150));
-    const sampledParked = [];
-    for (let i = 0; i < allParked.length; i += parkedStep) {
-      sampledParked.push(allParked[i]);
-    }
-
-    const markersToRender = [...sampledSigns, ...sampledParked];
-
-    for (const trk of markersToRender) {
-      let x = 0, y = 0;
-      if (trk.fixed) {
-        x = trk.fixed[0];
-        y = trk.fixed[1];
-      } else if (trk.pos && trk.pos.length > 0) {
-        x = trk.pos[0][1];
-        y = trk.pos[0][2];
-      } else {
-        continue;
-      }
-
-      const coord = this.xyToLatLon(x, y);
-
-      if (trk.kind === 'sign') {
-        const fam = getSignFamily(trk.cls);
-        const marker = L.circleMarker(coord, {
-          radius: 5,
-          fillColor: fam.color,
-          color: '#FFFFFF',
-          weight: 1.5,
-          opacity: 1,
-          fillOpacity: 0.85
+      if (tr.kind === 'sign') {
+        const label = formatClsLabel(tr.cls);
+        const marker = L.circleMarker(latlng, {
+          radius: 2,
+          fillColor: '#c8102e',
+          fillOpacity: 1,
+          color: '#ffffff',
+          weight: 1
         });
 
         marker.bindPopup(`
-          <div style="font-family: sans-serif; font-size: 12px; color: #111; line-height: 1.4;">
-            <strong style="color:${fam.color}; text-transform:uppercase;">${trk.cls.replace(/_/g, ' ')}</strong><br>
-            <span>Family: ${fam.label}</span><br>
-            <span>Street: ${trk.street || 'Street network'}</span><br>
-            <span>Time: ${formatTime(trk.t0)}</span><br>
-            <span>Confidence: ${(trk.score * 100).toFixed(1)}%</span><br>
-            <button style="margin-top: 6px; padding: 4px 8px; background: #3D7BD9; color: #fff; border: none; border-radius: 4px; cursor: pointer;"
-              onclick="window.civimaticaMapJump('${trk.id}', ${trk.t0})">
-              Seek to ${formatTime(trk.t0)} ↗
-            </button>
-          </div>
+          <div><strong>${label}</strong> · ${street}</div>
+          <div style="color:#4a4d52;margin-top:2px;">seen ${timeRange} · confidence ${conf} · merged from ${nDetections} detections · position estimated</div>
         `);
-        this.markersLayer.addLayer(marker);
-      } else if (trk.kind === 'vehicle' && trk.state === 'parked') {
-        const marker = L.circleMarker(coord, {
-          radius: 4.5,
-          fillColor: '#E8A33D',
-          color: '#FFFFFF',
-          weight: 1,
-          opacity: 1,
-          fillOpacity: 0.85
+
+        this.layers.signs.addLayer(marker);
+        this.allMarkers.push({ track: tr, marker, type: 'signs', defaultColor: '#c8102e' });
+
+      } else if (tr.kind === 'vehicle' && tr.cls === 'car' && tr.state === 'parked') {
+        const marker = new SquareMarker(latlng, {
+          size: 4,
+          fillColor: '#1f5fbf',
+          fillOpacity: 1,
+          color: '#ffffff',
+          weight: 1
+        });
+        marker.bindPopup(`
+          <div><strong>Parked car</strong> · ${street}</div>
+          <div style="color:#4a4d52;margin-top:2px;">seen ${timeStr} · confidence ${conf} · position estimated · plate not shown</div>
+        `);
+
+        this.layers.parked.addLayer(marker);
+        this.allMarkers.push({ track: tr, marker, type: 'parked', defaultColor: '#1f5fbf' });
+
+      } else if (tr.kind === 'object' || (tr.kind === 'vehicle' && tr.cls !== 'car')) {
+        const objLabel = formatClsLabel(tr.cls);
+        const marker = new DiamondMarker(latlng, {
+          size: 4,
+          fillColor: '#2f8a4c',
+          fillOpacity: 1,
+          color: '#ffffff',
+          weight: 1
         });
 
         marker.bindPopup(`
-          <div style="font-family: sans-serif; font-size: 12px; color: #111; line-height: 1.4;">
-            <strong style="color:#E8A33D;">CONFIRMED PARKED</strong><br>
-            <span>Class: ${trk.cls}</span><br>
-            <span>Street: ${trk.street || 'Street network'}</span><br>
-            <span>Time: ${formatTime(trk.t0)}</span><br>
-            <button style="margin-top: 6px; padding: 4px 8px; background: #E8A33D; color: #000; font-weight:600; border: none; border-radius: 4px; cursor: pointer;"
-              onclick="window.civimaticaMapJump('${trk.id}', ${trk.t0})">
-              Seek to ${formatTime(trk.t0)} ↗
-            </button>
-          </div>
+          <div><strong>${objLabel}</strong> · moving · ${street}</div>
+          <div style="color:#4a4d52;margin-top:2px;">seen ${timeStr} · position estimated</div>
         `);
-        this.markersLayer.addLayer(marker);
+
+        this.layers.objects.addLayer(marker);
+        this.allMarkers.push({ track: tr, marker, type: 'objects', defaultColor: '#2f8a4c' });
       }
     }
-
-    window.civimaticaMapJump = (trackId, t) => {
-      state.setTime(t);
-      const trk = drive.tracks.find(x => x.id === trackId);
-      if (trk) {
-        state.selectObject(trk);
-      }
-    };
   }
 
-  updateEgoMarker() {
-    if (!this.egoMarker) return;
-    const ego = state.getEgoAt(state.t);
-    const coord = this.xyToLatLon(ego.x, ego.y);
-    this.egoMarker.setLatLng(coord);
+  updateMarkerSizes() {
+    if (!this.map) return;
+    const z = this.map.getZoom();
+    const isStreetZoom = z >= 15;
+    const signR = isStreetZoom ? 3.5 : (z <= 13 ? 2 : 2.5);
+    const shapeSize = isStreetZoom ? 7 : (z <= 13 ? 4 : 5);
+
+    for (const item of this.allMarkers) {
+      if (item.type === 'signs') {
+        item.marker.setRadius(signR);
+      } else {
+        item.marker.options.size = shapeSize;
+        item.marker.redraw();
+      }
+    }
+  }
+
+  setLayerVisible(type, visible) {
+    this.layerVisibility[type] = visible;
+    const group = this.layers[type];
+    if (!group) return;
+    if (visible) {
+      if (!this.map.hasLayer(group)) this.map.addLayer(group);
+    } else {
+      if (this.map.hasLayer(group)) this.map.removeLayer(group);
+    }
+  }
+
+  setSignFilter(filterCls) {
+    this.currentSignFilter = filterCls;
+    for (const item of this.allMarkers) {
+      if (item.type !== 'signs') continue;
+      const match = !filterCls || item.track.cls === filterCls;
+      if (match) {
+        if (!this.layers.signs.hasLayer(item.marker)) {
+          this.layers.signs.addLayer(item.marker);
+        }
+      } else {
+        if (this.layers.signs.hasLayer(item.marker)) {
+          this.layers.signs.removeLayer(item.marker);
+        }
+      }
+    }
+  }
+
+  selectStreet(streetName) {
+    this.selectedStreet = streetName;
+
+    // Clear previous violet route lines
+    for (const line of this.selectedRouteLines) {
+      this.map.removeLayer(line);
+    }
+    this.selectedRouteLines = [];
+
+    if (!streetName) {
+      // Restore all markers to full opacity
+      for (const item of this.allMarkers) {
+        item.marker.setStyle({
+          fillOpacity: 1.0,
+          opacity: 1.0
+        });
+      }
+      if (this.routeBounds) {
+        this.map.fitBounds(this.routeBounds, { padding: [16, 16] });
+      }
+      return;
+    }
+
+    // Highlight selected street's route sections in violet 5px
+    const matchingSegs = this.streetSegments.filter(s => s.name === streetName);
+    const bounds = L.latLngBounds();
+
+    for (const seg of matchingSegs) {
+      const vLine = L.polyline(seg.latlngs, {
+        color: '#5b3fa6',
+        weight: 5,
+        lineCap: 'round',
+        lineJoin: 'round'
+      }).addTo(this.map);
+      this.selectedRouteLines.push(vLine);
+      bounds.extend(vLine.getBounds());
+    }
+
+    // Dim marks on other streets to ~30% opacity
+    for (const item of this.allMarkers) {
+      const isOnStreet = item.track.street === streetName;
+      item.marker.setStyle({
+        fillOpacity: isOnStreet ? 1.0 : 0.3,
+        opacity: isOnStreet ? 1.0 : 0.3
+      });
+    }
+
+    if (bounds.isValid()) {
+      this.map.fitBounds(bounds, { padding: [36, 36], maxZoom: 17 });
+    }
   }
 }
