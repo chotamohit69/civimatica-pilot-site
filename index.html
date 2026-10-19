@@ -3,78 +3,50 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#fafaf7">
+  <meta name="theme-color" content="#f6f3ee">
   <meta name="color-scheme" content="light">
-  <title>Civimatica Milan Pilot — Planning Sheet</title>
+  <title>Milan pilot · Civimatica</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
 
-  <link rel="preload" href="fonts/TitilliumWeb-Regular.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preconnect" href="https://cdn.jsdelivr.net">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.css" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
-    }
-  }
-  </script>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.15.0/mapbox-gl.js"></script>
 </head>
 <body>
-  <a href="#main" class="skip-link">Skip to main content</a>
+  <main class="app">
+    <div id="map" class="map" aria-label="Survey map"></div>
 
-  <header class="top-bar">
-    <div class="top-bar-brand">
-      <svg class="brand-mark" width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path d="M 3 3 L 15 3 L 21 9 L 21 21 L 3 21 Z" fill="#ffffff" stroke="#1c1e21" stroke-width="1.5" stroke-linejoin="round"/>
-        <path d="M 15 3 L 15 9 L 21 9 Z" fill="#ebeae5" stroke="#1c1e21" stroke-width="1.2" stroke-linejoin="round"/>
-        <line x1="8" y1="3" x2="8" y2="21" stroke="#ebeae5" stroke-width="1"/>
-        <line x1="3" y1="14" x2="21" y2="14" stroke="#ebeae5" stroke-width="1"/>
-        <path d="M 6 17 C 7.5 12, 11 15, 13.5 10.5 C 15 8, 17 7.5, 18 7.5" stroke="#5b3fa6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="6" cy="17" r="1.5" fill="#ffffff" stroke="#1c1e21" stroke-width="1.2"/>
-        <rect x="16.5" y="6" width="3" height="3" fill="#1c1e21"/>
-      </svg>
-      <span class="brand-title" translate="no">Civimatica</span>
-      <span class="brand-sep" aria-hidden="true">/</span>
-      <span class="brand-subtitle">Milan pilot</span>
+    <aside id="panel" class="panel" aria-label="Survey data"></aside>
+
+    <div class="top-bar map-actions" aria-label="Map actions"></div>
+
+    <div id="detail" class="detail" hidden aria-live="polite"></div>
+
+    <div class="brand-chip credit" aria-hidden="true">
+      <span class="mark"><i></i><i></i><i></i></span>
+      <span>Civimatica</span>
     </div>
 
-    <div class="top-bar-drive">
-      <label for="drive-select" class="drive-label">Drive</label>
-      <select id="drive-select" class="drive-select">
-        <option value="milan_i84">Downtown Milan drive</option>
-      </select>
-    </div>
-
-    <nav class="nav-tabs" aria-label="Views">
-      <a href="#/sheet" class="tab-link" data-tab="sheet">Sheet</a>
-      <a href="#/drive" class="tab-link" data-tab="drive">Drive-through</a>
-      <a href="#/signs" class="tab-link" data-tab="signs">Signs</a>
-      <a href="#/parking" class="tab-link" data-tab="parking">Parking</a>
-      <a href="#/privacy" class="tab-link" data-tab="privacy">Plates &amp; Privacy</a>
-    </nav>
-  </header>
-
-  <main id="main" class="main-content" tabindex="-1">
     <div id="state-loading" class="state-panel state-loading">
-      <p class="state-message">Loading drive…</p>
+      <div class="state-card">
+        <span class="state-spinner" aria-hidden="true"></span>
+        <p class="state-message">Loading Milan pilot survey…</p>
+      </div>
     </div>
 
     <div id="state-error" class="state-panel state-error" hidden>
-      <p class="state-message">Couldn't load the drive data. Reload the page; if it keeps failing, check that data/milan_i84/drive.json is deployed.</p>
+      <div class="state-card">
+        <p class="state-message">Couldn't load survey data. Reload the page to retry.</p>
+      </div>
     </div>
-
-    <div id="view-sheet" class="view-panel" hidden></div>
-    <div id="view-drive" class="view-panel" hidden></div>
-    <div id="view-signs" class="view-panel" hidden></div>
-    <div id="view-parking" class="view-panel" hidden></div>
-    <div id="view-privacy" class="view-panel" hidden></div>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/app.js"></script>
   <script type="module" src="js/live.js"></script>
 </body>
 </html>
