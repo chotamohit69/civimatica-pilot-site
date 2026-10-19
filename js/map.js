@@ -1,28 +1,38 @@
 import { state } from './state.js';
 import { getSignFamily, formatTime } from './data.js';
 
+const STREET_PALETTE = [
+  '#3D7BD9', '#2BB3A3', '#E8A33D', '#9B59B6', '#3498DB',
+  '#E67E22', '#1ABC9C', '#F1C40F', '#E74C3C', '#2ECC71'
+];
+
 export class MapSection {
   constructor(container) {
     this.container = container;
     this.map = null;
     this.egoMarker = null;
-    this.routePolylines = [];
     this.markersLayer = null;
+    this.bounds = null;
 
     state.on('dataLoaded', () => this.initMap());
     state.on('timeUpdate', () => this.updateEgoMarker());
     state.on('sectionChange', (sec) => {
       if (sec === 'map' && this.map) {
-        setTimeout(() => {
+        requestAnimationFrame(() => {
           this.map.invalidateSize();
-          if (this.bounds) this.map.fitBounds(this.bounds, { padding: [50, 50] });
-        }, 100);
+          if (this.bounds) this.map.fitBounds(this.bounds, { padding: [40, 40] });
+        });
+        setTimeout(() => {
+          if (this.map) {
+            this.map.invalidateSize();
+          }
+        }, 120);
       }
     });
   }
 
   xyToLatLon(x, y) {
-    const origin = state.scene && state.scene.origin ? state.scene.origin : { lat: 45.478, lon: 9.176 };
+    const origin = (state.scene && state.scene.origin) ? state.scene.origin : { lat: 45.478, lon: 9.176 };
     const lat0 = origin.lat, lon0 = origin.lon;
     const lat = lat0 + y / 110540.0;
     const lon = lon0 + x / (111320.0 * Math.cos((lat0 * Math.PI) / 180.0));
@@ -34,9 +44,9 @@ export class MapSection {
       <div id="leaflet-map" class="leaflet-map-wrap"></div>
       <div class="map-legend">
         <div style="font-weight: 700; margin-bottom: 0.5rem; color: #FFFFFF;">Map Legend</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #FFFFFF; border: 2px solid #2BB3A3;"></span> Ego Vehicle</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #3D7BD9;"></span> Reconstructed Route</div>
-        <div class="legend-item"><span class="legend-swatch" style="background: #E8A33D;"></span> Parked Vehicles</div>
+        <div class="legend-item"><span class="legend-swatch" style="background: #2BB3A3; border: 2px solid #FFFFFF;"></span> Ego Vehicle</div>
+        <div class="legend-item"><span class="legend-swatch" style="background: #3D7BD9;"></span> Route by Street</div>
+        <div class="legend-item"><span class="legend-swatch" style="background: #E8A33D;"></span> Parked (Confirmed)</div>
         <div class="legend-item"><span class="legend-swatch" style="background: #D9483B;"></span> Prohibitory Signs</div>
         <div class="legend-item"><span class="legend-swatch" style="background: #2F6FDE;"></span> Mandatory Signs</div>
         <div class="legend-item"><span class="legend-swatch" style="background: #F2C14E;"></span> Warning Signs</div>
@@ -45,39 +55,38 @@ export class MapSection {
 
     const scene = state.scene;
     const drive = state.drive;
-    if (!scene) return;
+    if (!scene || !drive) return;
 
     const origin = scene.origin || { lat: 45.4782, lon: 9.1764 };
 
-    // Initialize Leaflet
     if (this.map) {
       this.map.remove();
     }
 
     this.map = L.map('leaflet-map', {
       center: [origin.lat, origin.lon],
-      zoom: 16,
+      zoom: 15,
       zoomControl: true
     });
 
-    // Dark / Carto style or Standard OSM tiles with attribution
+    // OSM Tiles with attribution
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, ODbL 1.0',
+      attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors, ODbL 1.0',
       maxZoom: 19
     }).addTo(this.map);
 
     this.markersLayer = L.layerGroup().addTo(this.map);
 
-    // Build route polyline
-    this.buildRoutePolyline();
+    // Build route coloured by street
+    this.buildStreetRoutePolylines();
 
-    // Build sign and vehicle markers
+    // Build sign and vehicle markers (limited for smooth rendering)
     this.buildTrackMarkers();
 
-    // Create current ego marker
+    // Create ego vehicle marker
     const egoIcon = L.divIcon({
       className: 'ego-leaflet-icon',
-      html: `<div style="width: 18px; height: 18px; background: #2BB3A3; border: 3px solid #FFFFFF; border-radius: 50%; box-shadow: 0 0 10px rgba(43, 179, 163, 0.9);"></div>`,
+      html: `<div style="width: 18px; height: 18px; background: #2BB3A3; border: 3px solid #FFFFFF; border-radius: 50%; box-shadow: 0 0 12px rgba(43, 179, 163, 1);"></div>`,
       iconSize: [18, 18],
       iconAnchor: [9, 9]
     });
@@ -88,52 +97,93 @@ export class MapSection {
     this.updateEgoMarker();
   }
 
-  buildRoutePolyline() {
+  buildStreetRoutePolylines() {
     const drive = state.drive;
     if (!drive || !drive.route || !drive.route.x) return;
 
     const rx = drive.route.x;
     const ry = drive.route.y;
     const rt = drive.route.t;
-    const latlngs = [];
+    const allLatLngs = [];
 
+    // Complete background glow line
     for (let i = 0; i < rx.length; i++) {
-      latlngs.push(this.xyToLatLon(rx[i], ry[i]));
+      allLatLngs.push(this.xyToLatLon(rx[i], ry[i]));
     }
 
-    // Outer glow
-    L.polyline(latlngs, {
-      color: '#2BB3A3',
+    if (allLatLngs.length > 0) {
+      this.bounds = L.latLngBounds(allLatLngs);
+      this.map.fitBounds(this.bounds, { padding: [40, 40] });
+    }
+
+    L.polyline(allLatLngs, {
+      color: '#1A202C',
       weight: 8,
-      opacity: 0.3
+      opacity: 0.6
     }).addTo(this.map);
 
-    // Main line
-    const mainLine = L.polyline(latlngs, {
-      color: '#3D7BD9',
-      weight: 4,
-      opacity: 0.9
-    }).addTo(this.map);
+    // If streets are defined, color route segments by street
+    const streets = drive.streets || [];
+    if (streets.length > 0) {
+      streets.forEach((st, idx) => {
+        const segLatLngs = [];
+        const segTimes = [];
+        const col = STREET_PALETTE[idx % STREET_PALETTE.length];
 
-    // Click anywhere on polyline to seek to that location
-    mainLine.on('click', (e) => {
-      const clickLL = e.latlng;
-      let closestIdx = 0, minDist = Infinity;
-      for (let i = 0; i < latlngs.length; i++) {
-        const d = clickLL.distanceTo(latlngs[i]);
-        if (d < minDist) {
-          minDist = d;
-          closestIdx = i;
+        for (let i = 0; i < rt.length; i++) {
+          if (rt[i] >= st.t0 && rt[i] <= st.t1) {
+            segLatLngs.push(allLatLngs[i]);
+            segTimes.push(rt[i]);
+          }
         }
-      }
-      if (rt && rt[closestIdx] !== undefined) {
-        state.setTime(rt[closestIdx]);
-      }
-    });
 
-    if (latlngs.length > 0) {
-      this.bounds = L.latLngBounds(latlngs);
-      this.map.fitBounds(this.bounds, { padding: [50, 50] });
+        if (segLatLngs.length > 1) {
+          const poly = L.polyline(segLatLngs, {
+            color: col,
+            weight: 5,
+            opacity: 0.95
+          }).addTo(this.map);
+
+          poly.bindTooltip(st.name, { sticky: true });
+
+          poly.on('click', (e) => {
+            const clickLL = e.latlng;
+            let closestIdx = 0, minDist = Infinity;
+            for (let j = 0; j < segLatLngs.length; j++) {
+              const d = clickLL.distanceTo(segLatLngs[j]);
+              if (d < minDist) {
+                minDist = d;
+                closestIdx = j;
+              }
+            }
+            if (segTimes[closestIdx] !== undefined) {
+              state.setTime(segTimes[closestIdx]);
+            }
+          });
+        }
+      });
+    } else {
+      // Fallback single colored polyline
+      const poly = L.polyline(allLatLngs, {
+        color: '#3D7BD9',
+        weight: 5,
+        opacity: 0.9
+      }).addTo(this.map);
+
+      poly.on('click', (e) => {
+        const clickLL = e.latlng;
+        let closestIdx = 0, minDist = Infinity;
+        for (let i = 0; i < allLatLngs.length; i++) {
+          const d = clickLL.distanceTo(allLatLngs[i]);
+          if (d < minDist) {
+            minDist = d;
+            closestIdx = i;
+          }
+        }
+        if (rt[closestIdx] !== undefined) {
+          state.setTime(rt[closestIdx]);
+        }
+      });
     }
   }
 
@@ -143,7 +193,27 @@ export class MapSection {
 
     this.markersLayer.clearLayers();
 
-    for (const trk of drive.tracks) {
+    // Filter and limit markers to keep map responsive
+    const allSigns = drive.tracks.filter(t => t.kind === 'sign');
+    const allParked = drive.tracks.filter(t => t.kind === 'vehicle' && t.state === 'parked' && t.confirmed);
+
+    // Sample signs evenly if many
+    const signStep = Math.max(1, Math.floor(allSigns.length / 250));
+    const sampledSigns = [];
+    for (let i = 0; i < allSigns.length; i += signStep) {
+      sampledSigns.push(allSigns[i]);
+    }
+
+    // Sample parked cars
+    const parkedStep = Math.max(1, Math.floor(allParked.length / 150));
+    const sampledParked = [];
+    for (let i = 0; i < allParked.length; i += parkedStep) {
+      sampledParked.push(allParked[i]);
+    }
+
+    const markersToRender = [...sampledSigns, ...sampledParked];
+
+    for (const trk of markersToRender) {
       let x = 0, y = 0;
       if (trk.fixed) {
         x = trk.fixed[0];
@@ -160,7 +230,7 @@ export class MapSection {
       if (trk.kind === 'sign') {
         const fam = getSignFamily(trk.cls);
         const marker = L.circleMarker(coord, {
-          radius: 6,
+          radius: 5,
           fillColor: fam.color,
           color: '#FFFFFF',
           weight: 1.5,
@@ -169,39 +239,38 @@ export class MapSection {
         });
 
         marker.bindPopup(`
-          <div style="font-family: sans-serif; font-size: 12px; color: #111;">
+          <div style="font-family: sans-serif; font-size: 12px; color: #111; line-height: 1.4;">
             <strong style="color:${fam.color}; text-transform:uppercase;">${trk.cls.replace(/_/g, ' ')}</strong><br>
             <span>Family: ${fam.label}</span><br>
             <span>Street: ${trk.street || 'Street network'}</span><br>
-            <span>Time seen: ${formatTime(trk.t0)}</span><br>
+            <span>Time: ${formatTime(trk.t0)}</span><br>
             <span>Confidence: ${(trk.score * 100).toFixed(1)}%</span><br>
             <button style="margin-top: 6px; padding: 4px 8px; background: #3D7BD9; color: #fff; border: none; border-radius: 4px; cursor: pointer;"
-              onclick="window.civimaticaSeek(${trk.t0})">
-              Jump to ${formatTime(trk.t0)}
+              onclick="window.civimaticaMapJump('${trk.id}', ${trk.t0})">
+              Seek to ${formatTime(trk.t0)} ↗
             </button>
           </div>
         `);
         this.markersLayer.addLayer(marker);
       } else if (trk.kind === 'vehicle' && trk.state === 'parked') {
         const marker = L.circleMarker(coord, {
-          radius: 5,
+          radius: 4.5,
           fillColor: '#E8A33D',
           color: '#FFFFFF',
           weight: 1,
           opacity: 1,
-          fillOpacity: 0.8
+          fillOpacity: 0.85
         });
 
         marker.bindPopup(`
-          <div style="font-family: sans-serif; font-size: 12px; color: #111;">
-            <strong style="color:#E8A33D;">PARKED VEHICLE</strong><br>
+          <div style="font-family: sans-serif; font-size: 12px; color: #111; line-height: 1.4;">
+            <strong style="color:#E8A33D;">CONFIRMED PARKED</strong><br>
             <span>Class: ${trk.cls}</span><br>
-            <span>Confirmed: ${trk.confirmed ? 'Yes' : 'No'}</span><br>
             <span>Street: ${trk.street || 'Street network'}</span><br>
-            <span>First seen: ${formatTime(trk.t0)}</span><br>
+            <span>Time: ${formatTime(trk.t0)}</span><br>
             <button style="margin-top: 6px; padding: 4px 8px; background: #E8A33D; color: #000; font-weight:600; border: none; border-radius: 4px; cursor: pointer;"
-              onclick="window.civimaticaSeek(${trk.t0})">
-              Jump to ${formatTime(trk.t0)}
+              onclick="window.civimaticaMapJump('${trk.id}', ${trk.t0})">
+              Seek to ${formatTime(trk.t0)} ↗
             </button>
           </div>
         `);
@@ -209,9 +278,12 @@ export class MapSection {
       }
     }
 
-    // Expose global seek helper for Leaflet popups
-    window.civimaticaSeek = (t) => {
+    window.civimaticaMapJump = (trackId, t) => {
       state.setTime(t);
+      const trk = drive.tracks.find(x => x.id === trackId);
+      if (trk) {
+        state.selectObject(trk);
+      }
     };
   }
 

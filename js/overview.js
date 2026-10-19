@@ -6,16 +6,19 @@ export class OverviewSection {
     this.container = container;
     this.canvas = null;
     this.ctx = null;
+    this.resizeObserver = null;
 
     state.on('dataLoaded', () => this.render());
     state.on('timeUpdate', () => this.updatePlayhead());
-    // Canvas has no size while its tab is hidden; redraw when shown.
-    state.on('sectionChange', (sec) => { if (sec === 'overview') this.drawSparkline(); });
+    state.on('sectionChange', (sec) => {
+      if (sec === 'overview') {
+        requestAnimationFrame(() => this.drawSparkline());
+      }
+    });
   }
 
   render() {
     const drive = state.drive;
-    const scene = state.scene;
     if (!drive) return;
 
     // Calculate km driven
@@ -29,9 +32,10 @@ export class OverviewSection {
     }
     const kmDriven = (totalMeters / 1000).toFixed(2);
 
-    // Compute unique sign families
     const tracks = drive.tracks || [];
     const signs = tracks.filter(t => t.kind === 'sign');
+    const sumTrackerTracks = signs.reduce((acc, s) => acc + (s.n_tracks || 1), 0);
+
     const familyCounts = { prohibitory: 0, mandatory: 0, warning: 0, parking: 0, other: 0 };
     for (const s of signs) {
       const fam = getSignFamily(s.cls).family;
@@ -42,8 +46,7 @@ export class OverviewSection {
     const parkedConfirmed = tracks.filter(t => t.kind === 'vehicle' && t.confirmed).length;
     const totalParked = tracks.filter(t => t.kind === 'vehicle' && t.state === 'parked').length;
     const movingVehicles = tracks.filter(t => t.kind === 'vehicle' && t.state === 'moving').length;
-    const sideObjects = tracks.filter(t => t.kind === 'object').length;
-    const devFps = drive.stats && drive.stats.fps ? drive.stats.fps : 14.6;
+    const devFps = (drive.stats && drive.stats.fps) ? drive.stats.fps : 14.6;
 
     this.container.innerHTML = `
       <div class="overview-page">
@@ -72,37 +75,27 @@ export class OverviewSection {
           <div class="kpi-card">
             <span class="kpi-label">Reconstructed Route</span>
             <span class="kpi-value">${kmDriven} <span style="font-size: 1rem">km</span></span>
-            <span class="kpi-sub">${drive.route && drive.route.t ? drive.route.t.length : 0} waypoints</span>
+            <span class="kpi-sub">(estimated)</span>
           </div>
           <div class="kpi-card">
-            <span class="kpi-label">Sign tracks</span>
-            <span class="kpi-value">${signs.length}</span>
-            <span class="kpi-sub" style="display:flex; gap: 4px; font-size: 0.72rem; margin-top: 4px;">
-              <span style="color:#D9483B">P:${familyCounts.prohibitory}</span> ·
-              <span style="color:#2F6FDE">M:${familyCounts.mandatory}</span> ·
-              <span style="color:#F2C14E">W:${familyCounts.warning}</span> ·
-              <span style="color:#3D7BD9">Pk:${familyCounts.parking}</span>
-            </span>
+            <span class="kpi-label">Unique Signs</span>
+            <span class="kpi-value">${signs.length.toLocaleString()}</span>
+            <span class="kpi-sub">from ${sumTrackerTracks.toLocaleString()} tracker tracks</span>
           </div>
           <div class="kpi-card">
             <span class="kpi-label">Parked Confirmed</span>
-            <span class="kpi-value" style="color: var(--accent-amber)">${parkedConfirmed}</span>
-            <span class="kpi-sub">${totalParked} total parked detections</span>
+            <span class="kpi-value" style="color: var(--accent-amber)">${parkedConfirmed.toLocaleString()}</span>
+            <span class="kpi-sub">${totalParked.toLocaleString()} total parked detections</span>
           </div>
           <div class="kpi-card">
-            <span class="kpi-label">Moving Vehicles</span>
-            <span class="kpi-value" style="color: var(--accent-cyan)">${movingVehicles}</span>
-            <span class="kpi-sub">Moving vehicle tracks</span>
+            <span class="kpi-label">Moving Tracks</span>
+            <span class="kpi-value" style="color: var(--accent-cyan)">${movingVehicles.toLocaleString()}</span>
+            <span class="kpi-sub">moving vehicle tracks</span>
           </div>
           <div class="kpi-card">
-            <span class="kpi-label">Side Objects</span>
-            <span class="kpi-value">${sideObjects}</span>
-            <span class="kpi-sub">Meters, stops, e-scooters</span>
-          </div>
-          <div class="kpi-card">
-            <span class="kpi-label">Pipeline speed</span>
+            <span class="kpi-label">Pipeline Speed</span>
             <span class="kpi-value" style="color: var(--accent-green)">${devFps} <span style="font-size: 1rem">FPS</span></span>
-            <span class="kpi-sub">On the Jetson, tiled 1080p sign search on 4K video</span>
+            <span class="kpi-sub">on the Jetson, tiled 1080p sign search on 4K video</span>
           </div>
         </div>
 
@@ -138,7 +131,21 @@ export class OverviewSection {
       state.setTime(targetT);
     });
 
-    window.addEventListener('resize', () => this.drawSparkline());
+    const wrap = this.canvas.parentElement;
+    if (wrap && window.ResizeObserver) {
+      if (this.resizeObserver) this.resizeObserver.disconnect();
+      this.resizeObserver = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          if (entry.contentRect.width > 0) {
+            this.drawSparkline();
+          }
+        }
+      });
+      this.resizeObserver.observe(wrap);
+    } else {
+      window.addEventListener('resize', () => this.drawSparkline());
+    }
+
     this.drawSparkline();
   }
 
@@ -147,12 +154,16 @@ export class OverviewSection {
     const drive = state.drive;
     if (!drive) return;
 
-    const width = this.canvas.parentElement.clientWidth;
-    const height = this.canvas.parentElement.clientHeight;
-    this.canvas.width = width * window.devicePixelRatio;
-    this.canvas.height = height * window.devicePixelRatio;
+    const wrap = this.canvas.parentElement;
+    const width = wrap ? wrap.clientWidth : 0;
+    const height = wrap ? wrap.clientHeight : 0;
+    if (width <= 0 || height <= 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.width = width * dpr;
+    this.canvas.height = height * dpr;
     this.ctx.resetTransform();
-    this.ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    this.ctx.scale(dpr, dpr);
 
     const ctx = this.ctx;
     ctx.clearRect(0, 0, width, height);
@@ -175,10 +186,12 @@ export class OverviewSection {
       ctx.lineTo(x1, height);
       ctx.stroke();
 
-      // Street label
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
-      ctx.font = '11px -apple-system, sans-serif';
-      ctx.fillText(s.name, x0 + 8, 18);
+      // Street label if wide enough
+      if (w > 30) {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+        ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText(s.name, x0 + 6, 18);
+      }
     });
 
     // Draw density curves
@@ -218,7 +231,7 @@ export class OverviewSection {
       }
     }
 
-    // Draw playhead directly at the end of sparkline pass
+    // Draw playhead
     const headX = (state.t / dur) * width;
     ctx.save();
     ctx.strokeStyle = '#FFFFFF';
@@ -230,7 +243,6 @@ export class OverviewSection {
     ctx.lineTo(headX, height);
     ctx.stroke();
 
-    // Playhead handle
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
     ctx.arc(headX, height - 6, 4, 0, Math.PI * 2);
@@ -239,7 +251,6 @@ export class OverviewSection {
   }
 
   updatePlayhead() {
-    // Only redraw sparkline if Overview section is currently active
     if (state.activeSection === 'overview') {
       this.drawSparkline();
     }

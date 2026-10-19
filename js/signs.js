@@ -8,6 +8,8 @@ export class SignsSection {
     this.familyFilter = 'all';
     this.sortCol = 'score';
     this.sortAsc = false;
+    this.page = 1;
+    this.pageSize = 25;
 
     state.on('dataLoaded', () => this.render());
   }
@@ -18,7 +20,7 @@ export class SignsSection {
 
     const tracks = (drive.tracks || []).filter(t => t.kind === 'sign');
 
-    // Class frequency histogram counts
+    // Class frequency histogram counts (top 20)
     const classCounts = {};
     for (const s of tracks) {
       classCounts[s.cls] = (classCounts[s.cls] || 0) + 1;
@@ -27,11 +29,11 @@ export class SignsSection {
     const maxClassCount = sortedClasses[0] ? sortedClasses[0][1] : 1;
 
     let histBarsHtml = '';
-    for (const [cls, cnt] of sortedClasses.slice(0, 8)) {
+    for (const [cls, cnt] of sortedClasses.slice(0, 20)) {
       const fam = getSignFamily(cls);
       const pct = ((cnt / maxClassCount) * 100).toFixed(0);
       histBarsHtml += `
-        <div style="margin-bottom: 0.5rem;">
+        <div style="margin-bottom: 0.45rem;">
           <div style="display:flex; justify-content:space-between; font-size:0.75rem; margin-bottom: 2px;">
             <span>${cls.replace(/_/g, ' ')}</span>
             <span style="font-weight: 700; color: ${fam.color}">${cnt}</span>
@@ -45,14 +47,14 @@ export class SignsSection {
 
     this.container.innerHTML = `
       <div class="overview-page">
-        <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+        <div style="display: grid; grid-template-columns: 1.8fr 1.2fr; gap: 1.5rem; margin-bottom: 1.5rem;">
           <div class="kpi-card">
             <span class="kpi-label">Sign Perception Summary</span>
-            <span class="kpi-value">${tracks.length}</span>
+            <span class="kpi-value">${tracks.length.toLocaleString()}</span>
             <span class="kpi-sub">Total unique traffic sign tracks identified</span>
           </div>
-          <div class="kpi-card">
-            <span class="kpi-label">Top Sign Classes (Histogram)</span>
+          <div class="kpi-card" style="max-height: 240px; overflow-y: auto;">
+            <span class="kpi-label">Top 20 Sign Classes (Histogram)</span>
             <div style="margin-top: 0.5rem;">
               ${histBarsHtml || '<span style="color:var(--text-dim)">No signs detected</span>'}
             </div>
@@ -78,14 +80,23 @@ export class SignsSection {
                   <th data-sort="cls">Sign Class ↕</th>
                   <th>Family</th>
                   <th data-sort="street">Street ↕</th>
-                  <th data-sort="t0">First Seen (t) ↕</th>
-                  <th data-sort="score">Confidence Score ↕</th>
+                  <th data-sort="t0">First Seen ↕</th>
+                  <th data-sort="score">Score ↕</th>
+                  <th data-sort="n_tracks">n_tracks ↕</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody id="signs-table-body">
               </tbody>
             </table>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border-subtle); font-size: 0.8rem;">
+            <div id="signs-page-info" style="color: var(--text-muted);"></div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn-ctrl" id="btn-signs-prev">◄ Prev</button>
+              <button class="btn-ctrl" id="btn-signs-next">Next ►</button>
+            </div>
           </div>
         </div>
       </div>
@@ -99,6 +110,7 @@ export class SignsSection {
     const searchInput = document.getElementById('sign-search');
     searchInput?.addEventListener('input', (e) => {
       this.searchTerm = e.target.value.toLowerCase();
+      this.page = 1;
       this.renderTable(tracks);
     });
 
@@ -107,6 +119,7 @@ export class SignsSection {
         this.familyFilter = btn.getAttribute('data-fam');
         document.querySelectorAll('#sign-family-filters button').forEach(b => b.classList.remove('btn-primary'));
         btn.classList.add('btn-primary');
+        this.page = 1;
         this.renderTable(tracks);
       });
     });
@@ -123,10 +136,25 @@ export class SignsSection {
         this.renderTable(tracks);
       });
     });
+
+    document.getElementById('btn-signs-prev')?.addEventListener('click', () => {
+      if (this.page > 1) {
+        this.page--;
+        this.renderTable(tracks);
+      }
+    });
+
+    document.getElementById('btn-signs-next')?.addEventListener('click', () => {
+      this.page++;
+      this.renderTable(tracks);
+    });
   }
 
   renderTable(tracks) {
     const tbody = document.getElementById('signs-table-body');
+    const pageInfo = document.getElementById('signs-page-info');
+    const btnPrev = document.getElementById('btn-signs-prev');
+    const btnNext = document.getElementById('btn-signs-next');
     if (!tbody) return;
 
     // Filter
@@ -145,8 +173,8 @@ export class SignsSection {
     filtered.sort((a, b) => {
       let va = a[this.sortCol];
       let vb = b[this.sortCol];
-      if (va === undefined || va === null) va = '';
-      if (vb === undefined || vb === null) vb = '';
+      if (va === undefined || va === null) va = this.sortCol === 'n_tracks' ? 1 : '';
+      if (vb === undefined || vb === null) vb = this.sortCol === 'n_tracks' ? 1 : '';
       if (typeof va === 'string') {
         const res = va.localeCompare(vb);
         return this.sortAsc ? res : -res;
@@ -154,24 +182,39 @@ export class SignsSection {
       return this.sortAsc ? va - vb : vb - va;
     });
 
+    const totalPages = Math.max(1, Math.ceil(filtered.length / this.pageSize));
+    if (this.page > totalPages) this.page = totalPages;
+    if (this.page < 1) this.page = 1;
+
+    if (pageInfo) {
+      pageInfo.textContent = `Showing ${(filtered.length === 0 ? 0 : (this.page - 1) * this.pageSize + 1)}–${Math.min(filtered.length, this.page * this.pageSize)} of ${filtered.length.toLocaleString()} signs (Page ${this.page} of ${totalPages})`;
+    }
+    if (btnPrev) btnPrev.disabled = this.page <= 1;
+    if (btnNext) btnNext.disabled = this.page >= totalPages;
+
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color: var(--text-muted); padding: 2rem;">No matching signs found</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--text-muted); padding: 2rem;">No matching signs found</td></tr>`;
       return;
     }
 
+    const startIdx = (this.page - 1) * this.pageSize;
+    const pageItems = filtered.slice(startIdx, startIdx + this.pageSize);
+
     let rows = '';
-    for (const t of filtered) {
+    for (const t of pageItems) {
       const fam = getSignFamily(t.cls);
+      const nTracks = t.n_tracks || 1;
       rows += `
-        <tr data-id="${t.id}">
+        <tr data-id="${t.id}" class="sign-row" style="cursor: pointer;">
           <td><strong>${t.cls.replace(/_/g, ' ')}</strong></td>
           <td><span class="badge-family" style="background: ${fam.color}22; color: ${fam.color}; border: 1px solid ${fam.color}44;">${fam.label}</span></td>
           <td>${t.street || 'Street network'}</td>
           <td><code>${formatTime(t.t0)}</code></td>
           <td><strong style="color: var(--accent-cyan)">${(t.score * 100).toFixed(1)}%</strong></td>
+          <td><span style="color: var(--text-muted);">${nTracks}</span></td>
           <td>
-            <button class="btn-ctrl" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="window.civimaticaFocusSign('${t.id}')">
-              Focus 3D ↗
+            <button class="btn-ctrl btn-jump" data-id="${t.id}" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;">
+              View 3D ↗
             </button>
           </td>
         </tr>
@@ -179,13 +222,28 @@ export class SignsSection {
     }
     tbody.innerHTML = rows;
 
-    window.civimaticaFocusSign = (id) => {
-      const trk = tracks.find(x => x.id === id);
+    const jumpToTrack = (trackId) => {
+      const trk = tracks.find(x => x.id === trackId);
       if (trk) {
         state.setTime(trk.t0);
         state.selectObject(trk);
         state.setSection('street');
       }
     };
+
+    tbody.querySelectorAll('.sign-row').forEach(row => {
+      row.addEventListener('click', (e) => {
+        const id = row.getAttribute('data-id');
+        jumpToTrack(id);
+      });
+    });
+
+    tbody.querySelectorAll('.btn-jump').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        jumpToTrack(id);
+      });
+    });
   }
 }

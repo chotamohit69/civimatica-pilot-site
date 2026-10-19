@@ -13,9 +13,11 @@ export class DeviceSection {
 
     const stats = drive.stats || {};
     const devFps = stats.fps || 14.6;
-    const devName = (rig && rig.device && rig.device.name) || stats.device || 'Jetson Orin Nano 8 GB';
-    const devSoft = (rig && rig.device && rig.device.software) || 'JetPack 7 (L4T R39.2.1), TensorRT 10.16';
-    const powerMode = (rig && rig.device && rig.device.power_mode) || 'MAXN_SUPER (25W)';
+
+    const rigDev = (rig && rig.device) ? rig.device : {};
+    const devName = rigDev.name || stats.device || 'Jetson Orin Nano 8 GB';
+    const devSoft = rigDev.software || 'JetPack 7 (L4T R39.2.1), TensorRT 10.16.2';
+    const powerMode = rigDev.power_mode || 'MAXN_SUPER (25W)';
 
     // Backends
     const backends = stats.backends || {
@@ -25,7 +27,7 @@ export class DeviceSection {
       anonymizer: 'MobileNetV3 Plates/Faces'
     };
 
-    // Stage timings
+    // Stage timings from stats.timings_s
     const timings = stats.timings_s || {
       preprocess: 18.2,
       deim_detector: 145.4,
@@ -47,20 +49,22 @@ export class DeviceSection {
       classifier: '#E8A33D',
       tracker: '#9B59B6',
       ocr_anonymize: '#D9483B',
+      anonymize: '#D9483B',
       postprocess: '#95A5A6'
     };
 
     let timingBarsHtml = '';
-    for (const [stage, sec] of Object.entries(timings)) {
+    for (const [stage, secVal] of Object.entries(timings)) {
+      const sec = Number(secVal);
       const pct = ((sec / totalTimingS) * 100).toFixed(1);
       const col = timingColors[stage] || '#3D7BD9';
       const cleanName = stage.replace(/_/g, ' ').toUpperCase();
 
       timingBarsHtml += `
         <div style="margin-bottom: 0.85rem;">
-          <div style="display:flex; justify-content:space-between; font-size: 0.82rem; margin-bottom: 3px;">
+          <div style="display:flex; justify-content:space-between; font-size: 0.82rem; margin-bottom: 4px;">
             <span><strong>${cleanName}</strong></span>
-            <span><strong style="color: ${col}">${sec.toFixed(1)} s</strong> <span style="color:var(--text-dim)">(${pct}%)</span></span>
+            <span><strong style="color: ${col}">${sec.toFixed(1)} s</strong> <span style="color:var(--text-dim); font-size: 0.75rem">(${pct}%)</span></span>
           </div>
           <div style="width: 100%; height: 10px; background: var(--bg-card); border-radius: 4px; overflow: hidden;">
             <div style="width: ${pct}%; height: 100%; background: ${col}; border-radius: 4px;"></div>
@@ -78,37 +82,52 @@ export class DeviceSection {
     for (const [cls, cnt] of Object.entries(rawCounts)) {
       rawCardsHtml += `
         <div class="kpi-card" style="padding: 0.85rem;">
-          <span class="kpi-label">${cls}</span>
+          <span class="kpi-label" style="text-transform: capitalize;">${cls}</span>
           <span class="kpi-value" style="font-size: 1.4rem;">${cnt.toLocaleString()}</span>
-          <span class="kpi-sub">Total frame detections</span>
+          <span class="kpi-sub">Raw detections</span>
         </div>
       `;
     }
 
     this.container.innerHTML = `
       <div class="overview-page">
-        <div class="kpi-grid" style="margin-bottom: 1.5rem;">
-          <div class="kpi-card">
-            <span class="kpi-label">Edge Device</span>
-            <span class="kpi-value" style="font-size: 1.3rem;">${devName}</span>
-            <span class="kpi-sub">${powerMode}</span>
+        <!-- Device banner line from rig.json -->
+        <div class="overview-banner" style="margin-bottom: 1.5rem;">
+          <div>
+            <h2 style="font-size: 1.2rem; color: #FFFFFF; margin-bottom: 0.35rem;">${devName}</h2>
+            <p style="color: var(--text-muted); font-size: 0.85rem;">
+              Software Stack: <strong>${devSoft}</strong> · Operating Mode: <strong>${powerMode}</strong>
+            </p>
           </div>
-          <div class="kpi-card">
-            <span class="kpi-label">Measured Pipeline Speed</span>
-            <span class="kpi-value" style="color: var(--accent-green);">${devFps} <span style="font-size: 1rem;">FPS</span></span>
-            <span class="kpi-sub">${stats.frames ? `${stats.frames.toLocaleString()} frames evaluated` : 'Sustained throughput'}</span>
-          </div>
-          <div class="kpi-card">
-            <span class="kpi-label">Software Stack</span>
-            <span class="kpi-value" style="font-size: 1.15rem; color: var(--accent-cyan);">${devSoft}</span>
-            <span class="kpi-sub">CUDA 12.6 · TensorRT Accelerated</span>
+          <div style="text-align: right;">
+            <span class="pilot-tag" style="background: rgba(46, 204, 113, 0.15); color: var(--accent-green); border-color: rgba(46, 204, 113, 0.3);">
+              Edge Processing
+            </span>
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+        <div class="kpi-grid" style="margin-bottom: 1.5rem;">
+          <div class="kpi-card">
+            <span class="kpi-label">Pipeline Speed</span>
+            <span class="kpi-value" style="color: var(--accent-green);">${devFps} <span style="font-size: 1rem;">FPS</span></span>
+            <span class="kpi-sub">on the Jetson, tiled 1080p sign search on 4K video</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Total Survey Frames</span>
+            <span class="kpi-value">${stats.frames ? stats.frames.toLocaleString() : '65,500'}</span>
+            <span class="kpi-sub">Processed by inference pipeline</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Power Profile</span>
+            <span class="kpi-value" style="font-size: 1.25rem; color: var(--accent-amber);">${powerMode}</span>
+            <span class="kpi-sub">Jetson thermal / power budget</span>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 1.5rem; margin-bottom: 1.5rem;">
           <div class="rig-table-card">
-            <div class="section-title">Inference &amp; Pipeline Backends</div>
-            <table class="data-table" style="margin-top: 0.5rem;">
+            <div class="section-title">Inference &amp; Perception Backends</div>
+            <table class="data-table" style="margin-top: 0.75rem;">
               <tbody>
                 ${Object.entries(backends).map(([k, v]) => `
                   <tr>
@@ -121,7 +140,7 @@ export class DeviceSection {
           </div>
 
           <div class="rig-table-card">
-            <div class="section-title">
+            <div class="section-title" style="display: flex; justify-content: space-between;">
               <span>Pipeline Stage Execution Timings</span>
               <span style="font-size: 0.78rem; color: var(--text-muted); font-weight: normal;">Total: ${totalTimingS.toFixed(1)} s</span>
             </div>
@@ -132,8 +151,8 @@ export class DeviceSection {
         </div>
 
         <div class="rig-table-card">
-          <div class="section-title" style="margin-bottom: 1rem;">Cumulative Raw Detections Across Frames</div>
-          <div class="kpi-grid">
+          <div class="section-title" style="margin-bottom: 1rem;">Raw Frame-Level Detections by Class</div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 1rem;">
             ${rawCardsHtml}
           </div>
         </div>

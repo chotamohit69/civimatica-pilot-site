@@ -281,6 +281,14 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.scrubber-band:hover {
+  background: rgba(255, 255, 255, 0.16) !important;
+  color: #FFFFFF;
+}
+
+.scrubber-band-label {
+  pointer-events: none;
+}
 
 .scrubber-progress {
   position: absolute;
@@ -410,13 +418,15 @@ body {
 }
 
 /* Section 2: Street 3D */
-#view-street {
+.street-container {
+  width: 100%;
   height: calc(100vh - var(--header-height) - 45px - var(--control-bar-height));
   position: relative;
   overflow: hidden;
+  background-color: #E8E5DE;
 }
 
-.three-canvas-wrap {
+.street-canvas-wrap {
   width: 100%;
   height: 100%;
   position: absolute;
@@ -434,12 +444,12 @@ body {
   pointer-events: none;
 }
 
-.hud-panel {
-  background: rgba(22, 25, 30, 0.85);
+.street-hud-panel {
+  background: rgba(22, 25, 30, 0.88);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  padding: 0.5rem 0.75rem;
+  padding: 0.45rem 0.75rem;
   pointer-events: auto;
   display: flex;
   align-items: center;
@@ -447,7 +457,7 @@ body {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
-.hud-btn {
+.street-hud-btn {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
@@ -459,18 +469,18 @@ body {
   transition: all 0.15s;
 }
 
-.hud-btn:hover {
+.street-hud-btn:hover {
   color: #FFFFFF;
   background: var(--bg-card-hover);
 }
 
-.hud-btn.active {
+.street-hud-btn.active {
   background: var(--accent-blue);
   color: #FFFFFF;
   border-color: var(--accent-blue);
 }
 
-.fps-badge {
+.street-fps-badge {
   font-family: monospace;
   font-size: 0.75rem;
   color: var(--accent-green);
@@ -481,23 +491,23 @@ body {
   border: 1px solid rgba(46, 204, 113, 0.3);
 }
 
-/* Layer toggles panel */
-.layer-toggles-panel {
+.street-layer-panel {
   position: absolute;
   bottom: 1rem;
   left: 1rem;
-  background: rgba(22, 25, 30, 0.85);
+  background: rgba(22, 25, 30, 0.88);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
-  padding: 0.6rem 0.85rem;
+  padding: 0.5rem 0.85rem;
   z-index: 10;
   display: flex;
-  gap: 0.6rem;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.75rem;
 }
 
-.layer-toggle-btn {
+.street-layer-btn {
   background: transparent;
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
@@ -508,19 +518,23 @@ body {
   transition: all 0.15s;
 }
 
-.layer-toggle-btn.active {
+.street-layer-btn:hover {
+  color: #FFFFFF;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.street-layer-btn.active {
   background: rgba(255, 255, 255, 0.15);
   color: #FFFFFF;
   border-color: rgba(255, 255, 255, 0.4);
 }
 
-/* Object Inspection Card */
-.inspector-card {
+.street-inspector {
   position: absolute;
   top: 1rem;
   right: 1rem;
-  width: 310px;
-  background: rgba(22, 25, 30, 0.92);
+  width: 320px;
+  background: rgba(22, 25, 30, 0.94);
   backdrop-filter: blur(12px);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -530,62 +544,77 @@ body {
   display: none;
 }
 
-.inspector-card.visible {
+.street-inspector.visible {
   display: block;
 }
 
-.inspector-header {
+.street-inspector-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 0.6rem;
 }
 
-.inspector-title {
-  font-size: 0.95rem;
+.street-inspector-title {
+  font-size: 0.92rem;
   font-weight: 700;
   color: #FFFFFF;
+  letter-spacing: 0.02em;
 }
 
-.inspector-badge {
-  font-size: 0.7rem;
+.street-inspector-badge {
+  font-size: 0.68rem;
   font-weight: 600;
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
   text-transform: uppercase;
 }
 
-.inspector-table {
+.street-inspector-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+
+.street-inspector-close:hover {
+  color: #FFFFFF;
+}
+
+.street-inspector-table {
   width: 100%;
   font-size: 0.78rem;
   border-collapse: collapse;
 }
 
-.inspector-table td {
-  padding: 0.35rem 0;
+.street-inspector-table td {
+  padding: 0.32rem 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.inspector-table td:first-child {
+.street-inspector-table td:first-child {
   color: var(--text-muted);
-  width: 42%;
+  width: 44%;
 }
 
-.inspector-table td:last-child {
+.street-inspector-table td:last-child {
   color: #FFFFFF;
   font-weight: 500;
   text-align: right;
 }
 
-.inspector-note {
+.street-inspector-note {
   font-size: 0.7rem;
   color: var(--accent-yellow);
   font-style: italic;
   margin-top: 0.6rem;
   padding-top: 0.4rem;
-  border-top: 1px dashed var(--border-subtle);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: center;
 }
-
 /* Section 3: Map */
 #view-map {
   height: calc(100vh - var(--header-height) - 45px - var(--control-bar-height));
@@ -645,6 +674,48 @@ body {
   grid-template-columns: repeat(2, 1fr);
   gap: 1.25rem;
   margin-bottom: 1.5rem;
+}
+.rig-camera-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr 1fr;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+  align-items: start;
+}
+
+.rig-col-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rig-col-center {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.rig-col-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+.cam-sim-watermark {
+  position: absolute;
+  bottom: 8px;
+  left: 10px;
+  right: 10px;
+  font-size: 0.72rem;
+  background: rgba(18, 20, 23, 0.88);
+  backdrop-filter: blur(4px);
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: #CBD5E1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .camera-card {
@@ -893,4 +964,40 @@ body {
 .diagram-step p {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+/* Responsive styles down to 1280px */
+@media (max-width: 1366px) {
+  .top-header {
+    padding: 0 1rem;
+  }
+  .source-info-note {
+    max-width: 380px;
+  }
+  .rig-camera-layout {
+    grid-template-columns: 1fr 1.2fr 1fr;
+    gap: 0.85rem;
+  }
+  .cameras-page, .overview-page, .privacy-page {
+    padding: 1rem;
+  }
+}
+
+@media (max-width: 1280px) {
+  .source-info-note {
+    display: none;
+  }
+  .nav-tab {
+    padding: 0.7rem 0.85rem;
+    font-size: 0.8rem;
+  }
+  .kpi-grid {
+    gap: 0.75rem;
+  }
+  .kpi-card {
+    padding: 0.85rem;
+  }
+  .kpi-value {
+    font-size: 1.5rem;
+  }
 }

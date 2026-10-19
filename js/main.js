@@ -132,10 +132,10 @@ class App {
       let html = '';
       drive.streets.forEach((s, idx) => {
         const pctWidth = (((s.t1 - s.t0) / dur) * 100).toFixed(2);
-        const bg = idx % 2 === 0 ? 'rgba(255, 255, 255, 0.03)' : 'rgba(255, 255, 255, 0.07)';
+        const bg = idx % 2 === 0 ? 'rgba(255, 255, 255, 0.04)' : 'rgba(255, 255, 255, 0.08)';
         html += `
-          <div class="scrubber-band" style="width: ${pctWidth}%; background: ${bg};" title="${s.name}">
-            ${s.name}
+          <div class="scrubber-band" style="width: ${pctWidth}%; background: ${bg};" title="${s.name} (${formatTime(s.t0)}–${formatTime(s.t1)})">
+            <span class="scrubber-band-label">${s.name}</span>
           </div>
         `;
       });
