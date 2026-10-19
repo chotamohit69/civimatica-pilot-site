@@ -1,0 +1,8 @@
+[
+  {
+    "id": "milan_i84",
+    "title": "Downtown Milan drive (video inference)",
+    "scene": "data/milan_i84/scene.json",
+    "drive": "data/milan_i84/drive.json"
+  }
+]
