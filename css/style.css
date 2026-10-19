@@ -1306,7 +1306,6 @@ button {
   background: transparent;
   padding: 0;
   cursor: pointer;
-  position: relative;
   line-height: 1;
 }
 
